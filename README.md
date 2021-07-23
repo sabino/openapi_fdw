@@ -14,25 +14,25 @@ It wouldn't make sense to have these methods for a read only API, but I might tr
 
 1. After installing [multicorn](https://multicorn.org/), you should be able to just install this fdw using pip:
 
-```shell=
-pip3 install coincap_fdw
+```shell
+pip3 install coincap-fdw
 ```
 
 2. Then you need to make  sure you've created the extension within the postgres db:
 
-```sql=
+```sql
 CREATE EXTENSION multicorn;
 ```
 
 3. You should be able to create the server. You can name it however you want, in this case I'm calling it `coincap`:
 
-```sql=
+```sql
 CREATE SERVER coincap FOREIGN DATA WRAPPER multicorn
     options (wrapper 'coincap_fdw.CoinCapForeignDataWrapper');
 ```
 
 4. You can create the table now. Any additional field you want (comming from the API), just add here as `character varying`. You can also give any name to the table, in this case I'm calling it `crypto_assets`:
-```sql=
+```sql
  CREATE FOREIGN TABLE crypto_assets (
     id character varying,
     name character varying,
@@ -46,7 +46,7 @@ CREATE SERVER coincap FOREIGN DATA WRAPPER multicorn
 ```
 
 5. After that, just run a query:
-```sql=
+```sql
 SELECT name,
        cast(priceusd AS float)
 FROM crypto_assets

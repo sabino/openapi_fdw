@@ -27,21 +27,22 @@ CREATE EXTENSION multicorn;
 3. You should be able to create the server. You can name it however you want, in this case I'm calling it `coincap`:
 
 ```sql
-CREATE SERVER coincap FOREIGN DATA WRAPPER multicorn
+CREATE SERVER coincap
+    FOREIGN DATA WRAPPER multicorn
     options (wrapper 'coincap_fdw.CoinCapForeignDataWrapper');
 ```
 
 4. You can create the table now. Any additional field you want (comming from the API), just add here as `character varying`. You can also give any name to the table, in this case I'm calling it `crypto_assets`:
 ```sql
  CREATE FOREIGN TABLE crypto_assets (
-    id character varying,
-    name character varying,
-    rank character varying,
-    symbol character varying,
-    priceusd character varying,
-    changepercent24hr character varying,
-    supply character varying,
-    volumeusd24hr character varying
+    id TEXT,
+    name TEXT,
+    rank TEXT,
+    symbol TEXT,
+    priceusd TEXT,
+    changepercent24hr TEXT,
+    supply TEXT,
+    volumeusd24hr TEXT
 ) server coincap;
 ```
 

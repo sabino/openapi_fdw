@@ -32,7 +32,7 @@ CREATE SERVER coincap
     options (wrapper 'coincap_fdw.CoinCapForeignDataWrapper');
 ```
 
-4. You can create the table now. Any additional field you want (comming from the API), just add here as `character varying`. You can also give any name to the table, in this case I'm calling it `crypto_assets`:
+4. You can create the table now. Any additional field you want (comming from the API), just add here as `TEXT`. You can also give any name to the table, in this case I'm calling it `crypto_assets`:
 ```sql
  CREATE FOREIGN TABLE crypto_assets (
     id TEXT,

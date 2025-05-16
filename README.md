@@ -1,40 +1,36 @@
-# Coincap FDW
+# CoinCap Foreign Data Wrapper
 
-This is just an idea of how one could write a [Foreign data wrapper](https://wiki.postgresql.org/wiki/Foreign_data_wrappers) in [hy](https://github.com/hylang/hy).
+CoinCap FDW demonstrates how to expose the [CoinCap](https://coincap.io) API through PostgreSQL using [Multicorn](https://multicorn.org/) and the [Hy](https://github.com/hylang/hy) Lisp dialect. The project is intentionally small and aims to serve as a learning reference for writing Foreign Data Wrappers.
 
-Honestly I don't think the code is ideal but it shows you how to init the subclass considering the required parameters from the superclass.
+## Features
 
-Also, it is great to be able to use a lisp dialect to achieve this.
+- Read-only access to cryptocurrency asset data from CoinCap.
+- Implemented in Hy and distributed as a standard Python package.
 
-If you want to fork this and implement additional things like **INSERT**, **UPDATE** and **DELETE** support or even **COMMIT**, **ROLLBACK** you should take a look at the [Multicorn tutorial](https://multicorn.readthedocs.io/en/latest/implementing-tutorial.html#write-api). It should be very straightforward.
+## Installation
 
-It wouldn't make sense to have these methods for a read only API, but I might try to create another FDW at some point that might have them.
+1. Install Multicorn in your PostgreSQL instance.
+2. Install the FDW package using pip:
+
+```bash
+pip install coincap-fdw
+```
 
 ## Usage
 
-1. After installing [multicorn](https://multicorn.org/), you should be able to just install this fdw using pip:
-
-```shell
-pip3 install coincap-fdw
-```
-
-2. Then you need to make  sure you've created the extension within the postgres db:
+Create the Multicorn extension and server, then define a foreign table to query the assets endpoint.
 
 ```sql
+-- enable multicorn
 CREATE EXTENSION multicorn;
-```
 
-3. You should be able to create the server. You can name it however you want, in this case I'm calling it `coincap`:
-
-```sql
+-- create a server that points at the wrapper class
 CREATE SERVER coincap
     FOREIGN DATA WRAPPER multicorn
-    options (wrapper 'coincap_fdw.CoinCapForeignDataWrapper');
-```
+    OPTIONS (wrapper 'coincap_fdw.CoinCapForeignDataWrapper');
 
-4. You can create the table now. Any additional field you want (comming from the API), just add here as `TEXT`. You can also give any name to the table, in this case I'm calling it `crypto_assets`:
-```sql
- CREATE FOREIGN TABLE crypto_assets (
+-- define a foreign table using the server
+CREATE FOREIGN TABLE crypto_assets (
     id TEXT,
     name TEXT,
     rank TEXT,
@@ -43,29 +39,33 @@ CREATE SERVER coincap
     changepercent24hr TEXT,
     supply TEXT,
     volumeusd24hr TEXT
-) server coincap;
+) SERVER coincap;
 ```
 
-5. After that, just run a query:
+Querying the table will fetch data from the API:
+
 ```sql
 SELECT name,
-       cast(priceusd AS float)
+       CAST(priceusd AS FLOAT)
 FROM crypto_assets
 ORDER BY 2 DESC
 LIMIT 10;
 ```
+
+## Project Layout
+
 ```
-      name       |      priceusd
------------------+--------------------
- Bitcoin BEP2    | 32172.540563633753
- Bitcoin         |  32161.39844805744
- Wrapped Bitcoin |  32142.40818287929
- yearn.finance   | 28157.691588592475
- Maker           | 2412.0048277811693
- Ethereum        |  2005.716450530913
- Bitcoin Cash    |   433.355437728395
- Compound        |  388.5222106608794
- Binance Coin    |  283.2426902826701
- Aave            |  270.9662792522684
-(10 rows)
+coincap_fdw/
+├── src/              # Python/Hy source package
+│   ├── __init__.py   # Package initializer
+│   └── wrapper.hy    # Hy implementation of the FDW
+├── requirements.txt  # Runtime dependencies
+├── setup.py          # Packaging metadata
+└── README.md         # Project documentation (this file)
 ```
+
+The `wrapper.hy` file contains the `CoinCapForeignDataWrapper` class which makes HTTP requests to the CoinCap API and maps the response to the requested table columns. The package can be installed from source or via pip and is usable anywhere Multicorn is available.
+
+## License
+
+This project is distributed under the terms of the WTFPL license as declared in `setup.py`.

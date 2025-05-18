@@ -27,7 +27,11 @@ CREATE EXTENSION multicorn;
 -- create a server that points at the wrapper class
 CREATE SERVER coincap
     FOREIGN DATA WRAPPER multicorn
-    OPTIONS (wrapper 'coincap_fdw.CoinCapForeignDataWrapper');
+    OPTIONS (wrapper 'coincap_fdw.CoinCapForeignDataWrapper',
+            base_url 'https://api.coincap.io/v2',
+            endpoint 'assets');
+These options allow querying different CoinCap endpoints without changing the wrapper.
+The defaults are base_url "https://api.coincap.io/v2" and endpoint "assets".
 
 -- define a foreign table using the server
 CREATE FOREIGN TABLE crypto_assets (
@@ -56,9 +60,10 @@ LIMIT 10;
 
 ```
 coincap_fdw/
-├── src/              # Python/Hy source package
+├── coincap_fdw/      # Python source package
 │   ├── __init__.py   # Package initializer
-│   └── wrapper.hy    # Hy implementation of the FDW
+│   ├── api.py        # Helper for API requests
+│   └── wrapper.hy    # FDW implementation (Hy language)
 ├── requirements.txt  # Runtime dependencies
 ├── setup.py          # Packaging metadata
 └── README.md         # Project documentation (this file)

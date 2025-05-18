@@ -42,6 +42,13 @@ class TestAPI(unittest.TestCase):
         with patch('requests.request', make_mock_request(url, data)):
             self.assertEqual(fetch_endpoint('assets'), data)
 
+    def test_fetch_endpoint_with_api_key(self):
+        data = [{'id': 'btc'}]
+        key = 'secret'
+        url = f"{DEFAULT_BASE_URL}/assets?apiKey={key}"
+        with patch('requests.request', make_mock_request(url, data)):
+            self.assertEqual(fetch_endpoint('assets', api_key=key), data)
+
     def test_fetch_endpoint_error(self):
         class BadResponse(DummyResponse):
             def raise_for_status(self):
@@ -61,6 +68,15 @@ class TestWrapper(unittest.TestCase):
         url = f"{DEFAULT_BASE_URL}/assets"
         with patch('requests.request', make_mock_request(url, data)):
             wrapper = CoinCapForeignDataWrapper({}, {'id': {}})
+            rows = list(wrapper.execute({}, {}))
+            self.assertEqual(rows, [{'id': 'btc'}])
+
+    def test_execute_with_api_key(self):
+        data = [{'id': 'btc'}]
+        key = 'secret'
+        url = f"{DEFAULT_BASE_URL}/assets?apiKey={key}"
+        with patch('requests.request', make_mock_request(url, data)):
+            wrapper = CoinCapForeignDataWrapper({'api_key': key}, {'id': {}})
             rows = list(wrapper.execute({}, {}))
             self.assertEqual(rows, [{'id': 'btc'}])
 

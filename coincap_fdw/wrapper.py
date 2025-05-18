@@ -13,8 +13,9 @@ class CoinCapForeignDataWrapper(ForeignDataWrapper):
         self.columns = columns
         self.base_url = options.get("base_url", DEFAULT_BASE_URL)
         self.endpoint = options.get("endpoint", "assets")
+        self.api_key = options.get("api_key")
 
     def execute(self, quals, columns):
-        assets_list = fetch_endpoint(self.endpoint, self.base_url)
+        assets_list = fetch_endpoint(self.endpoint, self.base_url, self.api_key)
         return [dict_filter(asset, self.columns) for asset in assets_list]
 

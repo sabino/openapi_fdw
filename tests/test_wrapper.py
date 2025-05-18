@@ -16,6 +16,7 @@ sys.modules.setdefault('requests', SimpleNamespace(request=lambda *a, **k: None)
 
 from coincap_fdw.api import fetch_endpoint, DEFAULT_BASE_URL
 from coincap_fdw.wrapper import CoinCapForeignDataWrapper
+from coincap_fdw.wrapper import dict_filter
 
 
 class DummyResponse:
@@ -41,6 +42,18 @@ class TestAPI(unittest.TestCase):
         with patch('requests.request', make_mock_request(url, data)):
             self.assertEqual(fetch_endpoint('assets'), data)
 
+    def test_fetch_endpoint_error(self):
+        class BadResponse(DummyResponse):
+            def raise_for_status(self):
+                raise RuntimeError('boom')
+
+        def _request(method, url):
+            return BadResponse([])
+
+        with patch('requests.request', _request):
+            with self.assertRaises(RuntimeError):
+                fetch_endpoint('assets')
+
 
 class TestWrapper(unittest.TestCase):
     def test_execute_defaults(self):
@@ -60,6 +73,22 @@ class TestWrapper(unittest.TestCase):
                                                 {'id': {}, 'name': {}})
             rows = list(wrapper.execute({}, {}))
             self.assertEqual(rows, [{'id': 'btc', 'name': 'Bitcoin'}])
+
+    def test_execute_column_filtering(self):
+        data = [{'id': 'btc', 'name': 'Bitcoin', 'rank': '1'}]
+        url = f"{DEFAULT_BASE_URL}/assets"
+        with patch('requests.request', make_mock_request(url, data)):
+            wrapper = CoinCapForeignDataWrapper({}, {'id': {}, 'rank': {}})
+            rows = list(wrapper.execute({}, {}))
+            self.assertEqual(rows, [{'id': 'btc', 'rank': '1'}])
+
+
+class TestDictFilter(unittest.TestCase):
+    def test_dict_filter_case(self):
+        row = {'ID': 'btc', 'Name': 'Bitcoin', 'Extra': 1}
+        filtered = dict_filter(row, ['id', 'name'])
+        self.assertEqual(filtered, {'id': 'btc', 'name': 'Bitcoin'})
+
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ Welcome to **CoinCap Foreign Data Wrapper (FDW)**. This project exposes cryptocu
 
 ## What the project does
 
-CoinCap FDW lets you create a PostgreSQL foreign table that proxies a CoinCap API endpoint (by default `https://api.coincap.io/v2/assets`). Queries against this table trigger HTTP requests to fetch the data and return the JSON fields matching the table columns. The wrapper is read‐only and meant as a simple reference implementation for FDW development.
+CoinCap FDW lets you create a PostgreSQL foreign table that proxies a CoinCap API endpoint (by default `https://rest.coincap.io/v3/assets`). Queries against this table trigger HTTP requests to fetch the data and return the JSON fields matching the table columns. The wrapper is read‐only and meant as a simple reference implementation for FDW development.
 
 Key components:
 
@@ -24,8 +24,9 @@ Key components:
    CREATE SERVER coincap
        FOREIGN DATA WRAPPER multicorn
        OPTIONS (wrapper 'coincap_fdw.CoinCapForeignDataWrapper',
-                base_url 'https://api.coincap.io/v2',
-                endpoint 'assets');
+                base_url 'https://rest.coincap.io/v3',
+                endpoint 'assets',
+                api_key '<your API key>');
    ```
    The `base_url` and `endpoint` options are configurable when you create the server.
 3. Create a foreign table describing the columns you want to expose and query it like a normal table. Each query fetches from the configured CoinCap endpoint.

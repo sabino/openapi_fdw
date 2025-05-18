@@ -28,10 +28,12 @@ CREATE EXTENSION multicorn;
 CREATE SERVER coincap
     FOREIGN DATA WRAPPER multicorn
     OPTIONS (wrapper 'coincap_fdw.CoinCapForeignDataWrapper',
-            base_url 'https://api.coincap.io/v2',
-            endpoint 'assets');
+            base_url 'https://rest.coincap.io/v3',
+            endpoint 'assets',
+            api_key '<your API key>');
 These options allow querying different CoinCap endpoints without changing the wrapper.
-The defaults are base_url "https://api.coincap.io/v2" and endpoint "assets".
+The defaults are base_url "https://rest.coincap.io/v3" and endpoint "assets".
+An API key is required by CoinCap and can be provided with the `api_key` option.
 
 -- define a foreign table using the server
 CREATE FOREIGN TABLE crypto_assets (

@@ -1,78 +1,78 @@
-# CoinCap Foreign Data Wrapper
+# OpenAPI Foreign Data Wrapper
 
-CoinCap FDW demonstrates how to expose the [CoinCap](https://coincap.io) API through PostgreSQL using [Multicorn](https://multicorn.org/) and the [Hy](https://github.com/hylang/hy) Lisp dialect. The project is intentionally small and aims to serve as a learning reference for writing Foreign Data Wrappers.
+The OpenAPI FDW converts any OpenAPI/Swagger specification into a read-only schema that can be queried from PostgreSQL via [Multicorn](https://multicorn.org/). For each path + method combination you configure, the wrapper inspects the JSON response schema defined in the OpenAPI document, maps the response fields to columns, and issues HTTP requests at query time to return live data.
 
-## Features
+The entire FDW implementation is authored in [Hy](https://github.com/hylang/hy), with a tiny Python shim to expose the Hy class to PostgreSQL.
 
-- Read-only access to cryptocurrency asset data from CoinCap.
-- Implemented in Hy and distributed as a standard Python package.
+## Highlights
 
-## Installation
+- Works with any OpenAPI 3.x document reachable over HTTP/HTTPS.
+- Automatically infers columns from the response schema; optional case-insensitive projection for narrower tables.
+- Supports nested response payloads through configurable data paths and passes JSON options (headers, query params) directly to the target API.
+- Hy-only codebase, making it a concise reference for implementing Multicorn FDWs in a Lisp syntax.
 
-1. Install Multicorn in your PostgreSQL instance.
-2. Install the FDW package using pip:
+## Getting Started
+
+Install dependencies and run the test suite using [uv](https://github.com/astral-sh/uv):
 
 ```bash
-pip install coincap-fdw
+uv sync
+uv run python -m unittest discover -s tests -v
 ```
 
-## Usage
-
-Create the Multicorn extension and server, then define a foreign table to query the assets endpoint.
+### Basic Usage
 
 ```sql
--- enable multicorn
 CREATE EXTENSION multicorn;
 
--- create a server that points at the wrapper class
-CREATE SERVER coincap
-    FOREIGN DATA WRAPPER multicorn
-    OPTIONS (wrapper 'coincap_fdw.CoinCapForeignDataWrapper',
-            base_url 'https://rest.coincap.io/v3',
-            endpoint 'assets',
-            api_key '<your API key>');
-These options allow querying different CoinCap endpoints without changing the wrapper.
-The defaults are base_url "https://rest.coincap.io/v3" and endpoint "assets".
-An API key is required by CoinCap and can be provided with the `api_key` option.
+CREATE SERVER petstore
+  FOREIGN DATA WRAPPER multicorn
+  OPTIONS (
+    wrapper 'openapi_fdw.OpenAPIForeignDataWrapper',
+    openapi_url 'https://petstore3.swagger.io/api/v3/openapi.json',
+    path '/pet',
+    method 'get'
+  );
 
--- define a foreign table using the server
-CREATE FOREIGN TABLE crypto_assets (
-    id TEXT,
-    name TEXT,
-    rank TEXT,
-    symbol TEXT,
-    priceusd TEXT,
-    changepercent24hr TEXT,
-    supply TEXT,
-    volumeusd24hr TEXT
-) SERVER coincap;
+CREATE FOREIGN TABLE pets (
+  id integer,
+  name text,
+  status text
+) SERVER petstore;
 ```
 
-Querying the table will fetch data from the API:
+Each query against `pets` fetches the OpenAPI specification (cached by Multicorn) and the corresponding endpoint, then returns JSON objects mapped to the requested columns.
 
-```sql
-SELECT name,
-       CAST(priceusd AS FLOAT)
-FROM crypto_assets
-ORDER BY 2 DESC
-LIMIT 10;
-```
+### Configuration Options
+
+| Option         | Description                                                                                 | Default              |
+|----------------|---------------------------------------------------------------------------------------------|----------------------|
+| `openapi_url`  | URL pointing to the OpenAPI document (JSON).                                                | _required_           |
+| `path`         | Path template (as defined in the spec) to query.                                            | _required_           |
+| `method`       | HTTP method to use when calling the path.                                                   | `get`                |
+| `server_url`   | Override for the server URL; falls back to the first `servers` entry in the document.      | first server url     |
+| `data_path`    | Slash-separated path inside the JSON payload that resolves to the array of rows.           | root (when schema is an array) |
+| `query_params` | JSON object defining static query string parameters sent with every request.               | none                 |
+| `headers`      | JSON object containing HTTP headers to attach to both the spec and data requests.          | none                 |
+| `timeout`      | Request timeout in seconds used for both the spec fetch and data queries.                  | `10.0`               |
+
+Response payloads must ultimately resolve to a JSON array of objects after applying `data_path`.
 
 ## Project Layout
 
 ```
-coincap_fdw/
-├── coincap_fdw/      # Python source package
-│   ├── __init__.py   # Package initializer
-│   ├── api.py        # Helper for API requests
-│   └── wrapper.hy    # FDW implementation (Hy language)
-├── requirements.txt  # Runtime dependencies
-├── setup.py          # Packaging metadata
-└── README.md         # Project documentation (this file)
+openapi_fdw/
+├── openapi_fdw/
+│   ├── __init__.py      # Python shim exposing the Hy wrapper
+│   ├── api.hy           # OpenAPI parsing helpers and HTTP utilities
+│   └── wrapper.hy       # Hy implementation of the Multicorn FDW
+├── tests/               # Unit, integration, and docker-based smoke tests
+├── pyproject.toml       # Project metadata / uv configuration
+├── requirements.txt     # Runtime dependencies
+├── Dockerfile           # Postgres + Multicorn test image
+└── README.md            # This document
 ```
-
-The `wrapper.hy` file contains the `CoinCapForeignDataWrapper` class which makes HTTP requests to the CoinCap API and maps the response to the requested table columns. The package can be installed from source or via pip and is usable anywhere Multicorn is available.
 
 ## License
 
-This project is distributed under the terms of the WTFPL license as declared in `setup.py`.
+Distributed under the terms of the WTFPL as declared in `setup.py`.

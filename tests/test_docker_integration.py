@@ -17,12 +17,16 @@ class TestDockerPostgres(unittest.TestCase):
             raise unittest.SkipTest("psycopg2 not installed")
         if not shutil.which('docker'):
             raise unittest.SkipTest('docker not available')
-        if 'COINCAP_TOKEN' not in os.environ:
-            raise unittest.SkipTest('COINCAP_TOKEN not set')
 
-        subprocess.run(['docker', 'build', '-t', 'coincap_fdw_test', '.'], check=True)
+        cls.openapi_spec = os.environ.get('OPENAPI_FDW_SPEC')
+        cls.openapi_path = os.environ.get('OPENAPI_FDW_PATH')
+        cls.openapi_columns = os.environ.get('OPENAPI_FDW_COLUMNS')
+        if not all([cls.openapi_spec, cls.openapi_path, cls.openapi_columns]):
+            raise unittest.SkipTest('OPENAPI_FDW_SPEC, OPENAPI_FDW_PATH, and OPENAPI_FDW_COLUMNS must be set')
+
+        subprocess.run(['docker', 'build', '-t', 'openapi_fdw_test', '.'], check=True)
         cls.proc = subprocess.Popen(
-            ['docker', 'run', '--rm', '-e', 'POSTGRES_PASSWORD=postgres', '-p', '55432:5432', 'coincap_fdw_test'],
+            ['docker', 'run', '--rm', '-e', 'POSTGRES_PASSWORD=postgres', '-p', '55432:5432', 'openapi_fdw_test'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         for _ in range(30):
@@ -44,23 +48,22 @@ class TestDockerPostgres(unittest.TestCase):
             cls.proc.wait()
 
     def test_query(self):
-        token = os.environ['COINCAP_TOKEN']
         conn = psycopg2.connect(host='localhost', port=55432, user='postgres', password='postgres', dbname='postgres')
         cur = conn.cursor()
         cur.execute('CREATE EXTENSION multicorn;')
-        cur.execute("""
-            CREATE SERVER coincap FOREIGN DATA WRAPPER multicorn OPTIONS (
-                wrapper 'coincap_fdw.CoinCapForeignDataWrapper',
-                api_key '%s'
+        cur.execute(f"""
+            CREATE SERVER openapi FOREIGN DATA WRAPPER multicorn OPTIONS (
+                wrapper 'openapi_fdw.OpenAPIForeignDataWrapper',
+                openapi_url '{self.openapi_spec}',
+                path '{self.openapi_path}'
             );
-        """ % token)
-        cur.execute("""
-            CREATE FOREIGN TABLE assets (
-                id text,
-                name text
-            ) SERVER coincap;
         """)
-        cur.execute('SELECT id FROM assets LIMIT 1;')
+        cur.execute("""
+            CREATE FOREIGN TABLE items (
+                {self.openapi_columns}
+            ) SERVER openapi;
+        """)
+        cur.execute('SELECT * FROM items LIMIT 1;')
         row = cur.fetchone()
         self.assertIsNotNone(row)
         conn.close()

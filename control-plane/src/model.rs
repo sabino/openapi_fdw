@@ -105,6 +105,27 @@ impl SourceDefinition {
             return Err("re-enter redacted literal header values before applying".to_string());
         }
 
+        let authentication_header = match &self.auth {
+            AuthDefinition::Bearer { .. } => Some("authorization"),
+            AuthDefinition::ApiKey {
+                name,
+                location: ApiKeyLocation::Header,
+                ..
+            } => Some(name.as_str()),
+            _ => None,
+        };
+        if let Some(authentication_header) = authentication_header
+            && self
+                .headers
+                .keys()
+                .chain(self.headers_env.keys())
+                .any(|name| name.eq_ignore_ascii_case(authentication_header))
+        {
+            return Err(format!(
+                "authentication header `{authentication_header}` is also configured as a custom header"
+            ));
+        }
+
         self.auth.validate(require_credentials)?;
         self.settings.validate()?;
         Ok(())
@@ -155,12 +176,15 @@ impl AuthDefinition {
             Self::ApiKey {
                 secret,
                 name,
+                location,
                 prefix,
-                ..
             } => {
                 secret.validate("API key", require_credentials)?;
                 if name.trim().is_empty() || name.len() > 128 {
                     return Err("API-key name must contain 1 to 128 characters".to_string());
+                }
+                if matches!(location, ApiKeyLocation::Header) {
+                    validate_header_name(name)?;
                 }
                 if prefix.as_ref().is_some_and(|value| value.len() > 64) {
                     return Err("API-key prefix cannot exceed 64 characters".to_string());
@@ -235,7 +259,7 @@ impl SecretValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiKeyLocation {
     #[default]
@@ -610,5 +634,21 @@ mod tests {
         };
         assert!(secret.value.is_none());
         assert!(secret.configured);
+    }
+
+    #[test]
+    fn rejects_an_authentication_header_configured_twice() {
+        let mut source = example();
+        source.auth = AuthDefinition::Bearer {
+            secret: SecretValue {
+                value: Some("secret".to_string()),
+                env: None,
+                configured: false,
+            },
+        };
+        source
+            .headers
+            .insert("Authorization".to_string(), "duplicate".to_string());
+        assert!(source.validate(true).is_err());
     }
 }

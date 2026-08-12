@@ -49,6 +49,15 @@ test "$unauthorized" = "401"
 api GET /api/v1/state \
   | jq --exit-status '.sources == [] and (.postgresVersion | length > 0)' >/dev/null
 
+protected_delete=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request DELETE \
+  --header "Authorization: Bearer $admin_token" \
+  --header 'X-OpenAPI-FDW-Request: control-plane' \
+  --header 'Content-Type: application/json' \
+  --data '{"confirm":"unrelated_server"}' \
+  "$control_origin/api/v1/sources/unrelated_server")
+test "$protected_delete" = "422"
+
 discovery=$(api POST /api/v1/discover "$source_definition")
 printf '%s' "$discovery" \
   | jq --exit-status '.tables | map(.name) | index("list_items") != null' >/dev/null

@@ -215,7 +215,9 @@ function renderSource(source) {
   const actions = make("div", "source-actions");
   const sqlButton = make("button", "button button-quiet", "Copy connection SQL");
   sqlButton.type = "button";
-  sqlButton.addEventListener("click", () => copyConnectionSql(source));
+  sqlButton.addEventListener("click", () => {
+    copyConnectionSql(source).catch((error) => toast(error.message, true));
+  });
   const deleteButton = make("button", "button button-quiet", "Remove");
   deleteButton.type = "button";
   deleteButton.addEventListener("click", () => removeSource(source));
@@ -471,13 +473,18 @@ async function exportSetup() {
 }
 
 function openImport() {
-  state.importBundle = null;
-  byId("import-plan-panel").classList.add("hidden");
-  byId("apply-import-button").disabled = true;
+  invalidateImportPlan();
   byId("import-dialog").showModal();
 }
 
+function invalidateImportPlan() {
+  state.importBundle = null;
+  byId("import-plan-panel").classList.add("hidden");
+  byId("apply-import-button").disabled = true;
+}
+
 async function planImport() {
+  invalidateImportPlan();
   try {
     const bundle = JSON.parse(byId("import-json").value);
     const replace = byId("replace-import").checked;
@@ -485,14 +492,13 @@ async function planImport() {
       method: "POST",
       body: bundle,
     });
-    state.importBundle = bundle;
+    state.importBundle = { bundle, replace };
     byId("import-sql").textContent = result.sql;
     byId("import-plan-panel").classList.remove("hidden");
     byId("apply-import-button").disabled = false;
     toast(result.message);
   } catch (error) {
-    state.importBundle = null;
-    byId("apply-import-button").disabled = true;
+    invalidateImportPlan();
     toast(error.message, true);
   }
 }
@@ -502,10 +508,10 @@ async function applyImport() {
   const button = byId("apply-import-button");
   setBusy(button, true, "Applying…");
   try {
-    const replace = byId("replace-import").checked;
+    const { bundle, replace } = state.importBundle;
     const result = await api(`/api/v1/import/apply?replace=${replace}`, {
       method: "POST",
-      body: state.importBundle,
+      body: bundle,
     });
     byId("import-dialog").close();
     toast(result.message);
@@ -522,8 +528,7 @@ function loadImportFile(event) {
   if (!file) return;
   file.text().then((text) => {
     byId("import-json").value = text;
-    state.importBundle = null;
-    byId("apply-import-button").disabled = true;
+    invalidateImportPlan();
   }).catch((error) => toast(error.message, true));
 }
 
@@ -544,6 +549,8 @@ document.addEventListener("DOMContentLoaded", () => {
   byId("plan-import-button").addEventListener("click", planImport);
   byId("apply-import-button").addEventListener("click", applyImport);
   byId("import-file").addEventListener("change", loadImportFile);
+  byId("import-json").addEventListener("input", invalidateImportPlan);
+  byId("replace-import").addEventListener("change", invalidateImportPlan);
   updateAuthFields();
   updateSpecMode();
   loadState();

@@ -16,7 +16,7 @@ jobs:
   format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Check Python syntax
@@ -32,7 +32,7 @@ jobs:
       matrix:
         pg: [14, 15, 16, 17, 18]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
@@ -96,7 +96,7 @@ jobs:
     name: Control plane
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
 
       - name: Run control-plane unit tests

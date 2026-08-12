@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/root/.cargo/bin:${PATH}
 
 RUN if command -v apk >/dev/null 2>&1; then \
-        apk add --no-cache build-base ca-certificates clang curl llvm-dev pkgconf; \
+        apk add --no-cache build-base ca-certificates clang curl llvm-dev openssl-dev pkgconf; \
     else \
         apt-get update \
         && apt-get install -y --no-install-recommends \

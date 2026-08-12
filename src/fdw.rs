@@ -14,7 +14,7 @@ use supabase_wrappers::prelude::*;
 use uuid::Uuid;
 
 #[wrappers_fdw(
-    version = "0.3.1",
+    version = "0.3.2",
     author = "Sabino",
     website = "https://github.com/sabino/openapi_fdw",
     error_type = "OpenApiFdwError"
@@ -83,9 +83,30 @@ impl ForeignDataWrapper<OpenApiFdwError> for OpenApiFdw {
         options: &HashMap<String, String>,
     ) -> Result<()> {
         let table = TableConfig::from_options(options)?;
+        let Some((endpoint, used_path_quals, injected)) =
+            substitute_path_parameters(&table.endpoint, quals)?
+        else {
+            // A path endpoint such as `/cep/{cep}` is a parameterized lookup,
+            // not an enumerable collection. Catalog and BI clients commonly
+            // issue an unfiltered probe while discovering fields. Treat that
+            // probe as an empty relation: it preserves the declared tuple
+            // descriptor, performs no outbound request, and lets a later
+            // equality-constrained query execute the real lookup.
+            self.table = Some(table);
+            self.columns = columns.to_vec();
+            self.base_url = None;
+            self.initial_request = None;
+            self.current_url = None;
+            self.next = None;
+            self.seen_tokens.clear();
+            self.rows.clear();
+            self.row_index = 0;
+            self.pages_fetched = 0;
+            self.maximum_rows = Some(0);
+            self.injected.clear();
+            return Ok(());
+        };
         let base_url = self.resolve_base_url()?;
-        let (endpoint, used_path_quals, injected) =
-            substitute_path_parameters(&table.endpoint, quals)?;
         let url = endpoint_url(&base_url, &endpoint)?;
 
         let mut query = table
@@ -388,7 +409,7 @@ impl OpenApiFdw {
 fn substitute_path_parameters(
     template: &str,
     quals: &[Qual],
-) -> Result<(String, HashSet<String>, HashMap<String, String>)> {
+) -> Result<Option<(String, HashSet<String>, HashMap<String, String>)>> {
     let mut values = HashMap::new();
     for qual in quals {
         if let Some(value) = qual_value(qual) {
@@ -400,6 +421,7 @@ fn substitute_path_parameters(
     let mut remaining = template;
     let mut used = HashSet::new();
     let mut injected = HashMap::new();
+    let mut missing = false;
     while let Some(start) = remaining.find('{') {
         endpoint.push_str(&remaining[..start]);
         let after_open = &remaining[start + 1..];
@@ -408,18 +430,17 @@ fn substitute_path_parameters(
         })?;
         let parameter = &after_open[..end];
         let field = spec::sanitize_identifier(parameter);
-        let value = values.get(&field.to_ascii_lowercase()).ok_or_else(|| {
-            OpenApiFdwError::Configuration(format!(
-                "endpoint path parameter `{parameter}` requires `WHERE {field} = <value>`"
-            ))
-        })?;
-        endpoint.push_str(&utf8_percent_encode(value, NON_ALPHANUMERIC).to_string());
-        used.insert(field.to_ascii_lowercase());
-        injected.insert(field, value.clone());
+        if let Some(value) = values.get(&field.to_ascii_lowercase()) {
+            endpoint.push_str(&utf8_percent_encode(value, NON_ALPHANUMERIC).to_string());
+            used.insert(field.to_ascii_lowercase());
+            injected.insert(field, value.clone());
+        } else {
+            missing = true;
+        }
         remaining = &after_open[end + 1..];
     }
     endpoint.push_str(remaining);
-    Ok((endpoint, used, injected))
+    Ok((!missing).then_some((endpoint, used, injected)))
 }
 
 fn qual_value(qual: &Qual) -> Option<String> {
@@ -745,6 +766,7 @@ mod tests {
             "/pokemon/{pokemon_name}",
             &[string_qual("pokemon_name", "mr. mime")],
         )
+        .unwrap()
         .unwrap();
         assert_eq!(endpoint, "/pokemon/mr%2E%20mime");
         assert!(used.contains("pokemon_name"));
@@ -752,8 +774,17 @@ mod tests {
     }
 
     #[test]
-    fn path_parameters_are_required() {
-        assert!(substitute_path_parameters("/items/{id}", &[]).is_err());
+    fn missing_path_parameters_leave_the_lookup_unbound() {
+        assert!(
+            substitute_path_parameters("/items/{id}", &[])
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn malformed_path_templates_still_fail_when_unbound() {
+        assert!(substitute_path_parameters("/items/{id", &[]).is_err());
     }
 
     #[test]

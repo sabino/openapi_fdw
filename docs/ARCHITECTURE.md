@@ -126,6 +126,9 @@ stopped after configuration; it is never on the scan path.
 - OpenAPI primitive/format mapping to PostgreSQL types.
 - Nested objects and arrays mapped to JSONB.
 - Automatic `attrs jsonb` unless explicitly disabled.
+- Path-template endpoints act as parameterized lookups: all placeholders need
+  equality predicates to make an HTTP request. Unbound metadata probes return
+  an empty relation while retaining the declared PostgreSQL columns.
 - Response-envelope and GeoJSON inference during import so generated columns
   describe actual rows, not the outer document.
 - Manual JSONB-only tables for APIs that publish no OpenAPI document.

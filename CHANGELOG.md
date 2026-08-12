@@ -19,7 +19,7 @@
   integration coverage.
 - Default release containers to Alpine, add a stripped scratch control-plane
   image, add checksummed native packages for PostgreSQL 14 through 18, and add
-  a CapRover one-click definition.
+  an optional one-click deployment definition.
 
 ## 0.2.0 - 2026-08-12
 

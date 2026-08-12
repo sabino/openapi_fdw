@@ -65,7 +65,7 @@ matters for local and low-latency services.
 browser --> stateless Rust control plane -- reviewed SQL --> PostgreSQL catalogs
                                                         |
                                                         v
-PostgreSQL planner/executor <---------------------- Metabase / SQL clients
+PostgreSQL planner/executor <---------------------- SQL clients
         |
         v
 supabase-wrappers native FDW callbacks

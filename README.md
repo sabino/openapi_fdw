@@ -60,34 +60,14 @@ HTTPS requests to BrasilAPI and turn the JSON response into PostgreSQL rows.
 ```text
 browser ──> control plane ──SQL──> PostgreSQL + openapi_fdw
                                       │
-Metabase ─────────PostgreSQL──────────┤
+SQL clients ──────PostgreSQL──────────┤
                                       └──HTTPS──> external JSON APIs
 ```
 
 The control plane can be stopped after configuration. PostgreSQL keeps serving
 the foreign tables because the data plane has no dependency on the web app.
-Likewise, Metabase talks normal PostgreSQL; it does not need an OpenAPI plugin.
-
-## Connect Metabase
-
-Add the OpenAPI FDW PostgreSQL instance as a normal PostgreSQL database in
-Metabase. In Docker Compose, use `postgres:5432` from a container on the same
-network. In CapRover, use:
-
-```text
-Host:     srv-captain--openapi-fdw-db
-Port:     5432
-Database: openapi_fdw
-User:     openapi_fdw
-Password: <the PostgreSQL password configured at deployment>
-```
-
-The exact hostname changes if the CapRover app is given another name. No public
-database port is required when Metabase is in the same CapRover cluster.
-
-Metabase schema synchronization sees the imported foreign tables and their
-typed columns. Native SQL questions work immediately. Path-based endpoints
-need an equality predicate for every placeholder, as in the CEP example above.
+Any PostgreSQL-compatible client can query the tables without an OpenAPI-aware
+driver or plugin.
 
 ## Use any compatible OpenAPI document
 
@@ -291,7 +271,7 @@ reached 1,940 scans/s. Public network latency normally dominates; see
 ## Documentation
 
 - [Control plane and bundle format](docs/CONTROL_PLANE.md)
-- [Installation, containers, CapRover, and Metabase](docs/DEPLOYMENT.md)
+- [Installation and containers](docs/DEPLOYMENT.md)
 - [Architecture and trade-offs](docs/ARCHITECTURE.md)
 - [Original prototype audit](docs/AUDIT.md)
 - [Public API research](docs/API_RESEARCH.md)

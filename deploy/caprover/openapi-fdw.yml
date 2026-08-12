@@ -47,13 +47,6 @@ caproverOneClickApp:
       CapRover overlay network by default.
     end: |-
       Open https://$$cap_appname.$$cap_root_domain and sign in with the control-plane token.
-
-      Metabase running on this CapRover cluster can connect with:
-      host: srv-captain--$$cap_appname-db
-      port: 5432
-      database: $$cap_pg_db
-      username: $$cap_pg_user
-      password: the PostgreSQL password entered above
   displayName: OpenAPI FDW
   isOfficial: false
   description: Query OpenAPI-described HTTP APIs as live PostgreSQL foreign tables.

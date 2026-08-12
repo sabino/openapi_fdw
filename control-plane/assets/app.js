@@ -248,9 +248,9 @@ async function copyConnectionSql(source) {
   const searchPath = schemas.length ? schemas.map(quoteIdentifier).join(", ") : "public";
   const firstSchema = schemas.length ? quoteIdentifier(schemas[0]) : "public";
   const firstTable = quoteIdentifier(source.tables[0]?.name || "table_name");
-  const sql = `-- Run in Metabase after connecting this PostgreSQL database\nSET search_path TO ${searchPath}, public;\n\n-- Every SELECT below performs a live HTTP request\nSELECT * FROM ${firstSchema}.${firstTable} LIMIT 20;`;
+  const sql = `-- Run in any PostgreSQL client\nSET search_path TO ${searchPath}, public;\n\n-- Every SELECT below performs a live HTTP request\nSELECT * FROM ${firstSchema}.${firstTable} LIMIT 20;`;
   await navigator.clipboard.writeText(sql);
-  toast("Metabase starter SQL copied.");
+  toast("Connection SQL copied.");
 }
 
 async function removeSource(source) {

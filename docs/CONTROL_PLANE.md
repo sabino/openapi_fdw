@@ -7,7 +7,7 @@ JavaScript. It does not proxy query traffic and it does not copy API data.
 ```text
 administrator browser --> control plane --> PostgreSQL DDL/catalogs
                                               |
-SQL clients and Metabase ---------------------+
+SQL clients ----------------------------------+
                                               |
                                               +--> external API on every scan
 ```
@@ -26,10 +26,9 @@ its foreign tables.
 | `OPENAPI_FDW_POOL_SIZE` | no | `8` | PostgreSQL connection-pool size, 1 through 64 |
 | `RUST_LOG` | no | `openapi_fdw_control=info` | Rust tracing filter |
 
-The current control-plane PostgreSQL connection uses `NoTls`. In Docker Compose
-or CapRover it should use a private container/overlay network and
-`sslmode=disable`. Do not expose that unencrypted connection across an
-untrusted network.
+The current control-plane PostgreSQL connection uses `NoTls`. In containers or
+an orchestrator it should use a private network and `sslmode=disable`. Do not
+expose that unencrypted connection across an untrusted network.
 
 The login token is held in process memory. A successful login receives a
 derived, HTTP-only, same-site session cookie; the administrator token itself is

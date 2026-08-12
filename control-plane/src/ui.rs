@@ -61,7 +61,7 @@ pub fn dashboard() -> String {
                         p class="eyebrow" { "LIVE DATA PLANE" }
                         h1 id="page-title" { "Turn an OpenAPI service into tables." }
                         p class="lede" {
-                            "Discover operations, review the SQL, import a schema, then query the remote API from PostgreSQL or Metabase."
+                            "Discover operations, review the SQL, import a schema, then query the remote API from PostgreSQL."
                         }
                     }
                     div class="metrics" aria-label="Control-plane summary" {

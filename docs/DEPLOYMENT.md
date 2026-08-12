@@ -78,30 +78,12 @@ Then connect and run `CREATE EXTENSION openapi_fdw;`. If an FDW option names a
 secret environment variable, pass that variable to this PostgreSQL container,
 not to the control-plane container.
 
-## CapRover
+## Production operation
 
-[`deploy/caprover/openapi-fdw.yml`](../deploy/caprover/openapi-fdw.yml) is a
-CapRover v4 one-click definition. It creates:
-
-- `<app>`: the HTTPS control plane; and
-- `<app>-db`: private PostgreSQL 18 with a persistent volume mounted at
-  `/var/lib/postgresql`.
-
-In CapRover, choose **One-Click Apps/Databases**, use the template, provide an
-app name, keep separate long random PostgreSQL and administrator secrets, and
-deploy. Enable HTTPS and force HTTPS on the web app. PostgreSQL is deliberately
-not exposed as a web app and needs no public TCP mapping when its consumers are
-inside the same Swarm.
-
-For an app named `openapi-fdw`, another CapRover app reaches PostgreSQL at:
-
-```text
-srv-captain--openapi-fdw-db:5432
-```
-
-Back up the persistent PostgreSQL volume using the same process used for other
-CapRover databases. The control plane is stateless; its only required state is
-its environment configuration and the metadata stored in PostgreSQL.
+Keep PostgreSQL on a private network unless direct client access is required,
+persist `/var/lib/postgresql`, and use independent random values for the
+database password and control-plane administrator token. Terminate HTTPS in
+front of the control plane and retain its secure-cookie default.
 
 Upgrades should keep PostgreSQL on the same major unless a normal PostgreSQL
 major-version upgrade is performed. Updating a same-major image restarts the
@@ -109,37 +91,11 @@ service with the existing volume and updated extension files. Run
 `ALTER EXTENSION openapi_fdw UPDATE;` when a future release introduces an
 extension upgrade script.
 
-## Metabase
-
-Add the deployment as a normal PostgreSQL database. For the CapRover example:
-
-```text
-Display name: OpenAPI FDW / BrasilAPI
-Host:         srv-captain--openapi-fdw-db
-Port:         5432
-Database:     openapi_fdw
-Username:     openapi_fdw
-Password:     <deployment PostgreSQL password>
-SSL:          off for the private CapRover overlay connection
-```
-
-Grant Metabase a read-only role instead of reusing the owner in a multi-user
-installation:
-
-```sql
-CREATE ROLE metabase_openapi LOGIN PASSWORD '<different random password>';
-GRANT CONNECT ON DATABASE openapi_fdw TO metabase_openapi;
-GRANT USAGE ON SCHEMA brasil TO metabase_openapi;
-GRANT SELECT ON ALL TABLES IN SCHEMA brasil TO metabase_openapi;
-ALTER DEFAULT PRIVILEGES IN SCHEMA brasil
-  GRANT SELECT ON TABLES TO metabase_openapi;
-```
-
-Metabase schema sync sees foreign tables and typed columns. Each question or
-native query that scans one performs live outbound API work, so dashboard
-refresh frequency and upstream rate limits still matter. For expensive or
-rate-limited datasets, explicitly materialize selected results in local tables
-on a schedule instead of treating the FDW as a cache.
+Any PostgreSQL-compatible client can connect with the standard host, port,
+database, user, and password fields. Prefer a dedicated read-only login and
+grant it only `CONNECT`, schema `USAGE`, foreign-server `USAGE`, and `SELECT`
+on the intended foreign tables. Each scan performs live outbound API work, so
+client refresh frequency and upstream rate limits still matter.
 
 ## Checksummed native installation
 

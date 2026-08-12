@@ -42,7 +42,9 @@ pub async fn bootstrap(pool: &Pool) -> Result<()> {
                  definition jsonb NOT NULL,
                  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
                  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
-             );",
+             );
+             REVOKE ALL ON SCHEMA openapi_fdw_control FROM PUBLIC;
+             REVOKE ALL ON TABLE openapi_fdw_control.sources FROM PUBLIC;",
         )
         .await
         .context("could not initialize control-plane metadata")?;
@@ -178,13 +180,25 @@ pub async fn apply_bundle(pool: &Pool, bundle: &Bundle, replace: bool) -> Result
     let mut displayed = Vec::with_capacity(bundle.sources.len());
 
     for source in &bundle.sources {
-        let exists: bool = transaction
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM pg_foreign_server WHERE srvname = $1)",
+        let existing_wrapper = transaction
+            .query_opt(
+                "SELECT w.fdwname::text
+                   FROM pg_foreign_server s
+                   JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
+                  WHERE s.srvname = $1",
                 &[&source.name],
             )
             .await?
-            .get(0);
+            .map(|row| row.get::<_, String>(0));
+        if let Some(wrapper) = existing_wrapper.as_deref()
+            && wrapper != "openapi_fdw"
+        {
+            bail!(
+                "foreign server `{}` belongs to FDW `{wrapper}` and will not be replaced",
+                source.name
+            );
+        }
+        let exists = existing_wrapper.is_some();
         if exists && !replace {
             bail!(
                 "foreign server `{}` already exists; choose replace explicitly to reconcile it",
@@ -284,15 +298,21 @@ pub async fn delete_source(pool: &Pool, name: &str, confirmation: &str) -> Resul
     let sql = drop_server_sql(name);
     let mut client = pool.get().await.context("database pool is unavailable")?;
     let transaction = client.transaction().await?;
-    let exists: bool = transaction
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM pg_foreign_server WHERE srvname = $1)",
+    let existing_wrapper = transaction
+        .query_opt(
+            "SELECT w.fdwname::text
+               FROM pg_foreign_server s
+               JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
+              WHERE s.srvname = $1",
             &[&name],
         )
         .await?
-        .get(0);
-    if !exists {
+        .map(|row| row.get::<_, String>(0));
+    let Some(wrapper) = existing_wrapper else {
         bail!("foreign server `{name}` does not exist");
+    };
+    if wrapper != "openapi_fdw" {
+        bail!("foreign server `{name}` belongs to FDW `{wrapper}` and will not be removed");
     }
     transaction.batch_execute(&sql).await?;
     transaction

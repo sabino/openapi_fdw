@@ -145,6 +145,10 @@ jobs:
             sleep 1
           done
           docker exec openapi-fdw-control-postgres pg_isready -U postgres
+          docker exec openapi-fdw-control-postgres \
+            psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+              -c 'CREATE EXTENSION postgres_fdw' \
+              -c 'CREATE SERVER unrelated_server FOREIGN DATA WRAPPER postgres_fdw'
           docker run --detach \
             --name openapi-fdw-control \
             --network openapi-fdw-control-test \

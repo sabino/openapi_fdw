@@ -9,11 +9,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/root/.cargo/bin:${PATH}
 
 RUN if command -v apk >/dev/null 2>&1; then \
-        apk add --no-cache build-base ca-certificates clang cmake curl llvm-dev \
-            openssl-dev openssl-libs-static perl pkgconf; \
-        clang_major="$(clang --version | sed -n 's/.* version \([0-9][0-9]*\).*/\1/p' | head -n 1)"; \
-        test -n "$clang_major"; \
-        apk add --no-cache "clang${clang_major}-libclang"; \
+        apk add --no-cache build-base ca-certificates clang21 clang21-libclang \
+            cmake curl llvm21-dev openssl-dev openssl-libs-static perl pkgconf; \
     else \
         apt-get update \
         && apt-get install -y --no-install-recommends \
@@ -25,6 +22,7 @@ RUN if command -v apk >/dev/null 2>&1; then \
 RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
         https://sh.rustup.rs \
         | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.88.0 \
+    && rustup component add rustfmt \
     && cargo install --locked cargo-pgrx --version 0.16.1
 
 # A tiny export target used by constrained development hosts. It copies only
@@ -49,6 +47,11 @@ COPY src ./src
 COPY control-plane ./control-plane
 
 RUN --mount=type=cache,id=openapi-fdw-pg${PG_MAJOR}-target,target=/build/target,sharing=locked \
+    if command -v apk >/dev/null 2>&1; then \
+        export CLANG_PATH=/usr/bin/clang-21 \
+            LIBCLANG_PATH=/usr/lib/llvm21/lib \
+            LLVM_CONFIG_PATH=/usr/bin/llvm-config-21; \
+    fi; \
     cargo pgrx init --pg${PG_MAJOR}="$(command -v pg_config)" \
     && cargo pgrx package --no-default-features --features pg${PG_MAJOR} \
     && mkdir -p /package \

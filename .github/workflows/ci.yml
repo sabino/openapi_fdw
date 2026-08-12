@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Check Python syntax
+        run: python3 -m py_compile tests/mock_api.py
+
+  postgres:
+    name: PostgreSQL ${{ matrix.pg }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [14, 15, 16, 17, 18]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build native extension image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: PG_MAJOR=${{ matrix.pg }}
+          load: true
+          tags: openapi-fdw:test-pg${{ matrix.pg }}
+          cache-from: type=gha,scope=pg${{ matrix.pg }}
+          cache-to: type=gha,mode=max,scope=pg${{ matrix.pg }}
+
+      - name: Start deterministic API
+        run: |
+          python3 tests/mock_api.py \
+            --host 0.0.0.0 \
+            --port 18080 \
+            --advertise-origin http://host.docker.internal:18080 \
+            >/tmp/openapi-fdw-mock.log 2>&1 &
+
+      - name: Start PostgreSQL
+        run: |
+          docker run --detach \
+            --name openapi-fdw-pg${{ matrix.pg }} \
+            --add-host host.docker.internal:host-gateway \
+            --tmpfs /var/lib/postgresql:rw,size=512m \
+            --env POSTGRES_PASSWORD=postgres \
+            --volume "$GITHUB_WORKSPACE/tests:/tests:ro" \
+            openapi-fdw:test-pg${{ matrix.pg }}
+          for attempt in $(seq 1 60); do
+            if docker exec openapi-fdw-pg${{ matrix.pg }} pg_isready -U postgres; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec openapi-fdw-pg${{ matrix.pg }} pg_isready -U postgres
+
+      - name: Run real PostgreSQL and HTTP integration suite
+        run: |
+          docker exec openapi-fdw-pg${{ matrix.pg }} \
+            psql -X -v ON_ERROR_STOP=1 \
+              -v spec_url=http://host.docker.internal:18080/openapi.json \
+              -v api_base_url=http://host.docker.internal:18080/api \
+              -U postgres -d postgres \
+              -f /tests/sql/native_integration.sql
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          docker logs --tail 200 openapi-fdw-pg${{ matrix.pg }} || true
+          sed -n '1,200p' /tmp/openapi-fdw-mock.log || true
+
+      - name: Remove test container
+        if: always()
+        run: docker rm --force --volumes openapi-fdw-pg${{ matrix.pg }} || true

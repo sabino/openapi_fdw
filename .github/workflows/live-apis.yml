@@ -1,0 +1,51 @@
+name: Live API smoke tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build PostgreSQL 18 image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: PG_MAJOR=18
+          load: true
+          tags: openapi-fdw:live-pg18
+          cache-from: type=gha,scope=pg18
+          cache-to: type=gha,mode=max,scope=pg18
+      - name: Start PostgreSQL
+        run: |
+          docker run --detach \
+            --name openapi-fdw-live \
+            --tmpfs /var/lib/postgresql:rw,size=512m \
+            --env POSTGRES_PASSWORD=postgres \
+            --volume "$GITHUB_WORKSPACE/tests:/tests:ro" \
+            openapi-fdw:live-pg18
+          for attempt in $(seq 1 60); do
+            if docker exec openapi-fdw-live pg_isready -U postgres; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec openapi-fdw-live pg_isready -U postgres
+      - name: Query three independent public APIs through SQL
+        run: |
+          docker exec openapi-fdw-live \
+            psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
+              -f /tests/sql/live_apis.sql
+      - name: Diagnostics
+        if: failure()
+        run: docker logs --tail 200 openapi-fdw-live || true
+      - name: Remove test container
+        if: always()
+        run: docker rm --force --volumes openapi-fdw-live || true

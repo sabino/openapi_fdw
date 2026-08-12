@@ -29,6 +29,20 @@ IMPORT FOREIGN SCHEMA api
   INTO imported
   OPTIONS (methods 'GET', include_attrs 'true');
 
+CREATE SERVER environment_auth
+  FOREIGN DATA WRAPPER openapi_fdw
+  OPTIONS (
+    base_url :'api_base_url',
+    allow_http 'true',
+    headers_env '{"x-env-header":"OPENAPI_FDW_TEST_HEADER"}',
+    api_key_env 'OPENAPI_FDW_TEST_API_KEY',
+    api_key_name 'x-env-api-key',
+    max_pages '2'
+  );
+CREATE FOREIGN TABLE environment_auth_items (attrs jsonb)
+  SERVER environment_auth OPTIONS (endpoint '/items', pagination 'none');
+SELECT attrs FROM environment_auth_items LIMIT 1;
+
 DO $test$
 DECLARE
   actual_ids bigint[];
@@ -248,6 +262,14 @@ DO $test$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM request_log
+     WHERE attrs ->> 'path' = '/openapi.json'
+       AND attrs ->> 'testHeader' IS NULL
+       AND NOT (attrs ->> 'hasApiKey')::boolean
+  ) THEN
+    RAISE EXCEPTION 'API credentials were forwarded to the specification URL by default';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM request_log
      WHERE attrs ->> 'path' = '/api/items'
        AND attrs #>> '{query,limit,0}' = '1'
   ) THEN
@@ -259,6 +281,12 @@ BEGIN
        AND (attrs ->> 'hasApiKey')::boolean
   ) THEN
     RAISE EXCEPTION 'configured headers/authentication were not sent';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM request_log
+     WHERE (attrs ->> 'validEnvAuth')::boolean
+  ) THEN
+    RAISE EXCEPTION 'environment-backed headers/authentication were not sent';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM request_log

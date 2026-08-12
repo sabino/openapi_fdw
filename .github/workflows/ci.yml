@@ -21,6 +21,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check Python syntax
         run: python3 -m py_compile tests/mock_api.py
+      - name: Check browser JavaScript syntax
+        run: node --check control-plane/assets/app.js
 
   postgres:
     name: PostgreSQL ${{ matrix.pg }}
@@ -59,6 +61,8 @@ jobs:
             --add-host host.docker.internal:host-gateway \
             --tmpfs /var/lib/postgresql:rw,size=512m \
             --env POSTGRES_PASSWORD=postgres \
+            --env OPENAPI_FDW_TEST_HEADER=header-from-environment \
+            --env OPENAPI_FDW_TEST_API_KEY=key-from-environment \
             --volume "$GITHUB_WORKSPACE/tests:/tests:ro" \
             openapi-fdw:test-pg${{ matrix.pg }}
           for attempt in $(seq 1 60); do
@@ -87,3 +91,89 @@ jobs:
       - name: Remove test container
         if: always()
         run: docker rm --force --volumes openapi-fdw-pg${{ matrix.pg }} || true
+
+  control-plane:
+    name: Control plane
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Run control-plane unit tests
+        run: cargo test --locked --package openapi-fdw-control
+
+      - name: Build PostgreSQL 18 data plane
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: PG_MAJOR=18
+          load: true
+          tags: openapi-fdw:control-test
+          cache-from: type=gha,scope=pg18
+          cache-to: type=gha,mode=max,scope=pg18
+
+      - name: Build control-plane image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.control
+          load: true
+          tags: openapi-fdw-control:test
+          cache-from: type=gha,scope=control-plane
+          cache-to: type=gha,mode=max,scope=control-plane
+
+      - name: Start deterministic stack
+        env:
+          OPENAPI_FDW_ADMIN_TOKEN: integration-control-token
+        run: |
+          python3 tests/mock_api.py \
+            --host 0.0.0.0 \
+            --port 18080 \
+            --advertise-origin http://host.docker.internal:18080 \
+            >/tmp/openapi-fdw-control-mock.log 2>&1 &
+          docker network create openapi-fdw-control-test
+          docker run --detach \
+            --name openapi-fdw-control-postgres \
+            --network openapi-fdw-control-test \
+            --network-alias postgres \
+            --add-host host.docker.internal:host-gateway \
+            --tmpfs /var/lib/postgresql:rw,size=512m \
+            --env POSTGRES_PASSWORD=postgres \
+            openapi-fdw:control-test
+          for attempt in $(seq 1 60); do
+            if docker exec openapi-fdw-control-postgres pg_isready -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec openapi-fdw-control-postgres pg_isready -U postgres
+          docker run --detach \
+            --name openapi-fdw-control \
+            --network openapi-fdw-control-test \
+            --publish 18081:8080 \
+            --env DATABASE_URL=postgresql://postgres:postgres@postgres:5432/postgres?sslmode=disable \
+            --env OPENAPI_FDW_ADMIN_TOKEN="$OPENAPI_FDW_ADMIN_TOKEN" \
+            --env OPENAPI_FDW_COOKIE_SECURE=false \
+            openapi-fdw-control:test
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18081/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18081/healthz
+
+      - name: Exercise discovery, DDL, live rows, export, and removal
+        env:
+          OPENAPI_FDW_ADMIN_TOKEN: integration-control-token
+        run: sh tests/control_plane.sh
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          docker logs --tail 200 openapi-fdw-control || true
+          docker logs --tail 200 openapi-fdw-control-postgres || true
+          sed -n '1,200p' /tmp/openapi-fdw-control-mock.log || true
+
+      - name: Remove integration stack
+        if: always()
+        run: |
+          docker rm --force --volumes openapi-fdw-control || true
+          docker rm --force --volumes openapi-fdw-control-postgres || true
+          docker network rm openapi-fdw-control-test || true

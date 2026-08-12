@@ -54,7 +54,7 @@ class State:
 
     def record(self, handler: BaseHTTPRequestHandler, body: object | None) -> None:
         split = urlsplit(handler.path)
-        if split.path in {"/health", "/openapi.json", "/api/__requests"}:
+        if split.path in {"/health", "/api/__requests"}:
             return
         entry = {
             "method": handler.command,
@@ -64,6 +64,10 @@ class State:
             "userAgent": handler.headers.get("user-agent"),
             "testHeader": handler.headers.get("x-test-header"),
             "hasApiKey": handler.headers.get("x-api-key") is not None,
+            "validEnvAuth": (
+                handler.headers.get("x-env-header") == "header-from-environment"
+                and handler.headers.get("x-env-api-key") == "key-from-environment"
+            ),
         }
         with self.lock:
             self.requests.append(entry)

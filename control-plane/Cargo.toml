@@ -1,0 +1,26 @@
+[package]
+name = "openapi-fdw-control"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Small web control plane for OpenAPI FDW"
+license = "WTFPL"
+repository = "https://github.com/sabino/openapi_fdw"
+publish = false
+
+[dependencies]
+anyhow = "1.0.100"
+axum = { version = "0.8.9", features = ["form", "http1", "json", "tokio"] }
+deadpool-postgres = "0.14.1"
+maud = "0.27.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+subtle = "2.6.1"
+tokio = { version = "1.49.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio-postgres = { version = "0.7.18", features = ["with-serde_json-1"] }
+tower = "0.5.3"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+url = "2.5.8"
+uuid = { version = "1.21.0", features = ["v4"] }

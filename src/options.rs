@@ -1,6 +1,6 @@
 use crate::error::{OpenApiFdwError, Result};
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 use url::Url;
 
@@ -48,6 +48,7 @@ pub(crate) struct ServerConfig {
     pub(crate) max_retries: u32,
     pub(crate) max_retry_delay: Duration,
     pub(crate) max_redirects: usize,
+    pub(crate) spec_with_auth: bool,
     secrets: Vec<String>,
 }
 
@@ -75,6 +76,7 @@ impl std::fmt::Debug for ServerConfig {
             .field("max_retries", &self.max_retries)
             .field("max_retry_delay", &self.max_retry_delay)
             .field("max_redirects", &self.max_redirects)
+            .field("spec_with_auth", &self.spec_with_auth)
             .finish()
     }
 }
@@ -109,7 +111,7 @@ impl ServerConfig {
                 options
                     .get("user_agent")
                     .cloned()
-                    .unwrap_or_else(|| "openapi_fdw/0.2".to_string()),
+                    .unwrap_or_else(|| "openapi_fdw/0.3".to_string()),
             ),
             (
                 "accept".to_string(),
@@ -120,41 +122,50 @@ impl ServerConfig {
             ),
         ]);
         let mut header_secrets = Vec::new();
+        let mut custom_header_names = BTreeSet::new();
         if let Some(raw) = options.get("headers") {
             for (name, value) in parse_string_map(raw, "headers")? {
                 let normalized = name.to_ascii_lowercase();
-                if matches!(
-                    normalized.as_str(),
-                    "host" | "content-length" | "connection" | "transfer-encoding"
-                ) {
-                    return Err(OpenApiFdwError::Configuration(format!(
-                        "header `{name}` is controlled by the HTTP client"
-                    )));
-                }
+                validate_custom_header(&normalized, &name)?;
                 // A custom header can carry an API-specific credential even
                 // when its name does not look sensitive. Redact every custom
                 // value from remote error excerpts.
                 header_secrets.push(value.clone());
+                custom_header_names.insert(normalized.clone());
                 headers.insert(normalized, value);
             }
         }
 
-        let api_key = options.get("api_key").filter(|value| !value.is_empty());
-        let bearer = options
-            .get("bearer_token")
-            .filter(|value| !value.is_empty());
+        if let Some(raw) = options.get("headers_env") {
+            for (name, environment_name) in parse_string_map(raw, "headers_env")? {
+                let normalized = name.to_ascii_lowercase();
+                validate_custom_header(&normalized, &name)?;
+                if custom_header_names.contains(&normalized) {
+                    return Err(OpenApiFdwError::Configuration(format!(
+                        "header `{name}` is configured by both `headers` and `headers_env`"
+                    )));
+                }
+                let value = environment_secret(&environment_name, "headers_env")?;
+                header_secrets.push(value.clone());
+                custom_header_names.insert(normalized.clone());
+                headers.insert(normalized, value);
+            }
+        }
+
+        let api_key = secret_option(options, "api_key", "api_key_env")?;
+        let bearer = secret_option(options, "bearer_token", "bearer_token_env")?;
         if api_key.is_some() && bearer.is_some() {
             return Err(OpenApiFdwError::Configuration(
                 "configure either `api_key` or `bearer_token`, not both".to_string(),
             ));
         }
 
-        let auth = if let Some(token) = bearer {
+        let auth = if let Some(token) = &bearer {
             Auth::Header {
                 name: "authorization".to_string(),
                 value: format!("Bearer {token}"),
             }
-        } else if let Some(key) = api_key {
+        } else if let Some(key) = &api_key {
             let name = options
                 .get("api_key_name")
                 .cloned()
@@ -175,15 +186,17 @@ impl ServerConfig {
         } else {
             Auth::None
         };
+        if let Auth::Header { name, .. } = &auth
+            && headers.contains_key(&name.to_ascii_lowercase())
+        {
+            return Err(OpenApiFdwError::Configuration(format!(
+                "authentication header `{name}` is also configured as a custom or built-in header"
+            )));
+        }
 
         let mut secrets = header_secrets;
-        secrets.extend(
-            ["api_key", "bearer_token"]
-                .into_iter()
-                .filter_map(|name| options.get(name))
-                .filter(|value| !value.is_empty())
-                .cloned(),
-        );
+        secrets.extend(api_key);
+        secrets.extend(bearer);
         if let Auth::Header { value, .. } | Auth::Query { value, .. } = &auth {
             secrets.push(value.clone());
         }
@@ -234,8 +247,21 @@ impl ServerConfig {
                 60_000,
             )?),
             max_redirects: parse_bounded(options, "max_redirects", 5, 0, 10)? as usize,
+            spec_with_auth: parse_bool(options, "spec_with_auth", false)?,
             secrets,
         })
+    }
+
+    pub(crate) fn for_spec_fetch(&self) -> Self {
+        if self.spec_with_auth {
+            return self.clone();
+        }
+        let mut safe = self.clone();
+        safe.headers
+            .retain(|name, _| matches!(name.as_str(), "user-agent" | "accept"));
+        safe.auth = Auth::None;
+        safe.secrets.clear();
+        safe
     }
 
     pub(crate) fn redact(&self, text: &str) -> String {
@@ -495,6 +521,68 @@ fn parse_string_map(raw: &str, name: &str) -> Result<BTreeMap<String, String>> {
         .collect()
 }
 
+fn validate_custom_header(normalized: &str, original: &str) -> Result<()> {
+    if matches!(
+        normalized,
+        "host" | "content-length" | "connection" | "transfer-encoding"
+    ) {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "header `{original}` is controlled by the HTTP client"
+        )));
+    }
+    Ok(())
+}
+
+fn secret_option(
+    options: &HashMap<String, String>,
+    literal_name: &str,
+    environment_option: &str,
+) -> Result<Option<String>> {
+    let literal = options
+        .get(literal_name)
+        .filter(|value| !value.is_empty())
+        .cloned();
+    let environment_name = options
+        .get(environment_option)
+        .filter(|value| !value.is_empty());
+    if literal.is_some() && environment_name.is_some() {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "configure either `{literal_name}` or `{environment_option}`, not both"
+        )));
+    }
+    environment_name
+        .map(|name| environment_secret(name, environment_option))
+        .transpose()
+        .map(|value| value.or(literal))
+}
+
+fn environment_secret(environment_name: &str, option_name: &str) -> Result<String> {
+    let valid = environment_name.len() <= 128
+        && environment_name
+            .chars()
+            .next()
+            .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        && environment_name
+            .chars()
+            .all(|character| character == '_' || character.is_ascii_alphanumeric());
+    if !valid {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "option `{option_name}` must name an environment variable"
+        )));
+    }
+    match std::env::var(environment_name) {
+        Ok(value) if !value.is_empty() => Ok(value),
+        Ok(_) | Err(std::env::VarError::NotPresent) => {
+            Err(OpenApiFdwError::Configuration(format!(
+                "environment variable `{environment_name}` configured by `{option_name}` is missing or empty"
+            )))
+        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(OpenApiFdwError::Configuration(format!(
+            "environment variable `{environment_name}` configured by `{option_name}` is not UTF-8"
+        ))),
+    }
+}
+
 fn non_empty_option(
     options: &HashMap<String, String>,
     name: &str,
@@ -543,5 +631,21 @@ mod tests {
             config.redact("failed for Bearer extremely-secret and vendor-secret"),
             "failed for [REDACTED] and [REDACTED]"
         );
+    }
+
+    #[test]
+    fn missing_environment_secret_names_are_safe_to_report() {
+        let options = HashMap::from([
+            ("base_url".to_string(), "https://example.test".to_string()),
+            (
+                "bearer_token_env".to_string(),
+                "OPENAPI_FDW_TEST_DEFINITELY_MISSING".to_string(),
+            ),
+        ]);
+        let error = ServerConfig::from_options(&options)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("OPENAPI_FDW_TEST_DEFINITELY_MISSING"));
+        assert!(error.contains("missing or empty"));
     }
 }

@@ -4,16 +4,33 @@ services:
       context: .
       args:
         PG_MAJOR: ${PG_MAJOR:-18}
-    image: openapi-fdw:pg${PG_MAJOR:-18}
+    image: openapi-fdw:pg${PG_MAJOR:-18}-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openapi-fdw-local}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     shm_size: 256mb
     volumes:
       - postgres-data:/var/lib/postgresql
+
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile.control
+    image: openapi-fdw-control:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-openapi-fdw-local}@postgres:5432/${POSTGRES_DB:-postgres}?sslmode=disable
+      OPENAPI_FDW_ADMIN_TOKEN: ${OPENAPI_FDW_ADMIN_TOKEN:-openapi-fdw-local-admin}
+      OPENAPI_FDW_COOKIE_SECURE: "false"
+    ports:
+      - "${CONTROL_PORT:-8080}:8080"
+    read_only: true
+
 
 volumes:
   postgres-data:

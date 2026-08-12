@@ -18,7 +18,7 @@ jobs:
       matrix:
         pg: [14, 15, 16, 17, 18]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -52,7 +52,7 @@ jobs:
       matrix:
         pg: [14, 15, 16, 17, 18]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Export glibc extension package
         uses: docker/build-push-action@v7
@@ -77,7 +77,7 @@ jobs:
           archive="openapi_fdw-${VERSION}-pg${PG_MAJOR}-linux-amd64.tar.gz"
           tar -C /tmp/release -czf "$archive" .
           sha256sum "$archive" >"$archive.sha256"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: native-pg${{ matrix.pg }}
           path: |
@@ -89,7 +89,7 @@ jobs:
     name: Control-plane image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -116,7 +116,7 @@ jobs:
     needs: [postgres-image, native-package, control-image]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: native-pg*
           merge-multiple: true

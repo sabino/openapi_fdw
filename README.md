@@ -1,5 +1,10 @@
 # OpenAPI Foreign Data Wrapper
 
+> **Project status:** the Hy/Multicorn code below is an experimental prototype,
+> not a production-ready FDW. The reproducible gaps are recorded in
+> [`docs/AUDIT.md`](docs/AUDIT.md), and the accepted native Rust overhaul is
+> described in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 The OpenAPI FDW converts any OpenAPI/Swagger specification into a read-only schema that can be queried from PostgreSQL via [Multicorn](https://multicorn.org/). For each path + method combination you configure, the wrapper inspects the JSON response schema defined in the OpenAPI document, maps the response fields to columns, and issues HTTP requests at query time to return live data.
 
 The entire FDW implementation is authored in [Hy](https://github.com/hylang/hy), with a tiny Python shim to expose the Hy class to PostgreSQL.

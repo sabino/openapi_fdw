@@ -87,9 +87,14 @@ front of the control plane and retain its secure-cookie default.
 
 Upgrades should keep PostgreSQL on the same major unless a normal PostgreSQL
 major-version upgrade is performed. Updating a same-major image restarts the
-service with the existing volume and updated extension files. Run
-`ALTER EXTENSION openapi_fdw UPDATE;` when a future release introduces an
-extension upgrade script.
+service with the existing volume and updated extension files. After installing
+version 0.3.2 over 0.3.1, run:
+
+```sql
+ALTER EXTENSION openapi_fdw UPDATE TO '0.3.2';
+```
+
+New PostgreSQL sessions then use the updated versioned shared library.
 
 Any PostgreSQL-compatible client can connect with the standard host, port,
 database, user, and password fields. Prefer a dedicated read-only login and
@@ -115,7 +120,7 @@ The script:
 3. downloads the matching GitHub release archive and SHA-256 file;
 4. verifies the checksum; and
 5. installs only the versioned `openapi_fdw-<version>.so` library, its control
-   file, and versioned SQL file.
+   file, and versioned initial/upgrade SQL files.
 
 Omit `--version` to follow the latest GitHub release. Set `PG_CONFIG` or pass
 `--pg-config` when several PostgreSQL installations exist. Build from source on

@@ -113,5 +113,5 @@ for sql_file in $sql_files; do
   install -m 0644 "$sql_file" "$extension_dir/${sql_file##*/}"
 done
 
-printf 'Installed OpenAPI FDW %s for PostgreSQL %s. Run CREATE EXTENSION openapi_fdw in each target database.\n' \
+printf 'Installed OpenAPI FDW %s for PostgreSQL %s. Run CREATE EXTENSION for a new database or ALTER EXTENSION openapi_fdw UPDATE for an existing installation.\n' \
   "$version" "$pg_major"

@@ -35,7 +35,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-for command in curl sha256sum tar install mktemp; do
+for command in curl find install mkdir mktemp sed sha256sum tar uname; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'Required command is missing: %s\n' "$command" >&2
     exit 1
@@ -52,6 +52,20 @@ if [ -z "$version" ]; then
     "https://github.com/$repository/releases/latest")
   version=${latest_url##*/}
 fi
+
+case "$version" in
+  v[0-9]* ) ;;
+  *)
+    printf 'Release version must start with v and a digit: %s\n' "$version" >&2
+    exit 1
+    ;;
+esac
+case "$version" in
+  *[!A-Za-z0-9._-]* )
+    printf 'Release version contains unsupported characters: %s\n' "$version" >&2
+    exit 1
+    ;;
+esac
 
 architecture=$(uname -m)
 test "$architecture" = x86_64 || {

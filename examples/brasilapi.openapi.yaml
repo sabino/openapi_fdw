@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BrasilAPI tables for OpenAPI FDW
-  version: 2026-08-12
+  version: "2026-08-12"
   description: >-
     A small, stable OpenAPI view over public BrasilAPI endpoints. BrasilAPI's
     own documentation is assembled from OpenAPI fragments at render time; this

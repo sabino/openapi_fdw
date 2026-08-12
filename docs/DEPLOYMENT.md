@@ -42,8 +42,8 @@ The data-plane tags are:
 ```text
 ghcr.io/sabino/openapi_fdw:pg18
 ghcr.io/sabino/openapi_fdw:pg18-alpine
-ghcr.io/sabino/openapi_fdw:v0.3.0-pg18
-ghcr.io/sabino/openapi_fdw:v0.3.0-pg18-alpine
+ghcr.io/sabino/openapi_fdw:v0.3.1-pg18
+ghcr.io/sabino/openapi_fdw:v0.3.1-pg18-alpine
 ```
 
 Replace `18` with 14, 15, 16, or 17 as needed. Floating `pgN` tags follow the
@@ -55,7 +55,7 @@ The control-plane tags are:
 
 ```text
 ghcr.io/sabino/openapi_fdw:control
-ghcr.io/sabino/openapi_fdw:v0.3.0-control
+ghcr.io/sabino/openapi_fdw:v0.3.1-control
 ```
 
 It is a stripped static executable in `scratch`, runs as UID/GID 65532, embeds
@@ -148,7 +148,7 @@ glibc Linux x86-64 with the matching PostgreSQL runtime/development files:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sabino/openapi_fdw/main/scripts/install.sh \
-  | sudo sh -s -- --version v0.3.0 \
+  | sudo sh -s -- --version v0.3.1 \
       --pg-config /usr/lib/postgresql/18/bin/pg_config
 ```
 
@@ -158,7 +158,8 @@ The script:
 2. accepts only supported PostgreSQL 14 through 18 and x86-64;
 3. downloads the matching GitHub release archive and SHA-256 file;
 4. verifies the checksum; and
-5. installs only `openapi_fdw.so`, its control file, and versioned SQL file.
+5. installs only the versioned `openapi_fdw-<version>.so` library, its control
+   file, and versioned SQL file.
 
 Omit `--version` to follow the latest GitHub release. Set `PG_CONFIG` or pass
 `--pg-config` when several PostgreSQL installations exist. Build from source on

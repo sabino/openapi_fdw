@@ -7,7 +7,7 @@ pg_config=${PG_CONFIG:-pg_config}
 
 usage() {
   printf '%s\n' \
-    'Usage: install.sh [--version v0.3.0] [--pg-config /path/to/pg_config]' \
+    'Usage: install.sh [--version v0.3.1] [--pg-config /path/to/pg_config]' \
     '' \
     'Installs a checksummed glibc/Linux x86-64 OpenAPI FDW release for the' \
     'PostgreSQL major reported by pg_config.'
@@ -95,10 +95,11 @@ curl --fail --silent --show-error --location \
 mkdir "$temporary/package"
 tar -C "$temporary/package" -xzf "$temporary/$archive"
 
-library="$temporary/package/openapi_fdw.so"
+library=$(find "$temporary/package" -maxdepth 1 -type f \
+  -name 'openapi_fdw-*.so' -print -quit)
 control="$temporary/package/openapi_fdw.control"
 sql=$(find "$temporary/package" -maxdepth 1 -type f -name 'openapi_fdw--*.sql' -print -quit)
-test -f "$library" && test -f "$control" && test -n "$sql" || {
+test -n "$library" && test -f "$library" && test -f "$control" && test -n "$sql" || {
   printf 'Release archive is incomplete.\n' >&2
   exit 1
 }
@@ -106,7 +107,7 @@ test -f "$library" && test -f "$control" && test -n "$sql" || {
 pkglibdir=$($pg_config --pkglibdir)
 extension_dir=$($pg_config --sharedir)/extension
 install -d "$pkglibdir" "$extension_dir"
-install -m 0755 "$library" "$pkglibdir/openapi_fdw.so"
+install -m 0755 "$library" "$pkglibdir/${library##*/}"
 install -m 0644 "$control" "$extension_dir/openapi_fdw.control"
 install -m 0644 "$sql" "$extension_dir/${sql##*/}"
 

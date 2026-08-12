@@ -78,13 +78,17 @@ jobs:
             --env OPENAPI_FDW_TEST_API_KEY=key-from-environment \
             --volume "$GITHUB_WORKSPACE/tests:/tests:ro" \
             openapi-fdw:test-pg${{ matrix.pg }}
+          ready_checks=0
           for attempt in $(seq 1 60); do
             if docker exec openapi-fdw-pg${{ matrix.pg }} pg_isready -U postgres; then
-              break
+              ready_checks=$((ready_checks + 1))
+              if [ "$ready_checks" -ge 3 ]; then break; fi
+            else
+              ready_checks=0
             fi
             sleep 1
           done
-          docker exec openapi-fdw-pg${{ matrix.pg }} pg_isready -U postgres
+          test "$ready_checks" -ge 3
 
       - name: Run real PostgreSQL and HTTP integration suite
         run: |
@@ -153,11 +157,17 @@ jobs:
             --tmpfs /var/lib/postgresql:rw,size=512m \
             --env POSTGRES_PASSWORD=postgres \
             openapi-fdw:control-test
+          ready_checks=0
           for attempt in $(seq 1 60); do
-            if docker exec openapi-fdw-control-postgres pg_isready -U postgres; then break; fi
+            if docker exec openapi-fdw-control-postgres pg_isready -U postgres; then
+              ready_checks=$((ready_checks + 1))
+              if [ "$ready_checks" -ge 3 ]; then break; fi
+            else
+              ready_checks=0
+            fi
             sleep 1
           done
-          docker exec openapi-fdw-control-postgres pg_isready -U postgres
+          test "$ready_checks" -ge 3
           docker exec openapi-fdw-control-postgres \
             psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres \
               -c 'CREATE EXTENSION postgres_fdw' \

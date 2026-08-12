@@ -9,8 +9,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/root/.cargo/bin:${PATH}
 
 RUN if command -v apk >/dev/null 2>&1; then \
-        apk add --no-cache build-base ca-certificates clang curl llvm-dev \
-            openssl-dev openssl-libs-static pkgconf; \
+        apk add --no-cache build-base ca-certificates clang cmake curl llvm-dev \
+            openssl-dev openssl-libs-static perl pkgconf; \
         clang_major="$(clang --version | sed -n 's/.* version \([0-9][0-9]*\).*/\1/p' | head -n 1)"; \
         test -n "$clang_major"; \
         apk add --no-cache "clang${clang_major}-libclang"; \

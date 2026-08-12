@@ -127,8 +127,9 @@ pub(crate) fn fetch_spec(server: &ServerConfig) -> Result<Value> {
             "schema import requires server option `spec_url` or `spec_json`".to_string(),
         )
     })?;
+    let spec_server = server.for_spec_fetch();
     let response = execute(
-        server,
+        &spec_server,
         &HttpRequest {
             method: "GET".to_string(),
             url,

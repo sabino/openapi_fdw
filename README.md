@@ -2,104 +2,177 @@
 
 [![CI](https://github.com/sabino/openapi_fdw/actions/workflows/ci.yml/badge.svg)](https://github.com/sabino/openapi_fdw/actions/workflows/ci.yml)
 
-`openapi_fdw` is a native, read-only PostgreSQL foreign data wrapper for JSON
-HTTP APIs. It can create typed foreign tables from OpenAPI 3.0/3.1 documents,
-or expose any JSON endpoint through one stable `jsonb` column.
+Turn an OpenAPI-described HTTP API into live PostgreSQL tables.
 
-The runtime is Rust, [`pgrx`](https://github.com/pgcentralfoundation/pgrx), and
-[`supabase-wrappers`](https://github.com/supabase/wrappers). It does **not**
-embed Python, Hy, Multicorn, or a Wasm runtime in PostgreSQL. The original Hy
-prototype remains available in Git history; the reasons for replacing it are
-in [the audit](docs/AUDIT.md) and [architecture decision](docs/ARCHITECTURE.md).
+`openapi_fdw` is a native, read-only PostgreSQL foreign data wrapper written in
+Rust. It discovers operations from OpenAPI 3.0/3.1, creates typed foreign
+tables, and makes a real HTTP request whenever PostgreSQL scans one of those
+tables. Every imported table can also retain the complete source object in an
+`attrs jsonb` column, so new API fields are immediately queryable without DDL.
 
-## Start in Docker
+The project ships two deliberately separate pieces:
 
-The image contains PostgreSQL and the extension. `PG_MAJOR` can be any version
-from 14 through 18.
+- the **data plane**, a native PostgreSQL extension built with `pgrx` and
+  Supabase Wrappers; and
+- the **control plane**, a small stateless Rust web service that discovers
+  tables, previews the exact SQL, applies configuration transactionally,
+  previews live rows, and imports or exports redacted setup bundles.
+
+There is no Python interpreter, Hy runtime, Multicorn process, Node server, or
+hidden data-copy service in production.
+
+## Run the complete stack
 
 ```bash
-docker build --build-arg PG_MAJOR=18 -t openapi-fdw:pg18 .
-docker run --name openapi-postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -p 5432:5432 \
-  -d openapi-fdw:pg18
+cp .env.example .env
+# Put independent random values in POSTGRES_PASSWORD and
+# OPENAPI_FDW_ADMIN_TOKEN, then:
+docker compose up --build -d
 ```
 
-For a persistent local development database, the equivalent shortcut is
-`POSTGRES_PASSWORD=postgres docker compose up --build -d`.
+Open [http://localhost:8080](http://localhost:8080), sign in with
+`OPENAPI_FDW_ADMIN_TOKEN`, and press **Discover tables**. The form is already
+filled with this repository's directly importable BrasilAPI definition.
 
-After PostgreSQL is healthy:
+Choose one or more operations, inspect the generated SQL, and apply it. A few
+seconds later PostgreSQL has ordinary-looking foreign tables such as:
 
-```bash
-docker exec -i openapi-postgres \
-  psql -U postgres -d postgres <<'SQL'
+```sql
+SELECT code, name, full_name, attrs ->> 'logo_url' AS logo_url
+FROM brasil.banks
+WHERE code IS NOT NULL
+ORDER BY code
+LIMIT 20;
+
+SELECT nome, valor
+FROM brasil.interest_rates;
+
+SELECT cep, city, state, attrs #>> '{location,coordinates,latitude}' AS latitude
+FROM brasil.address_by_cep
+WHERE cep = '01001000';
+```
+
+Those queries do not read a stale import or replica. They issue bounded live
+HTTPS requests to BrasilAPI and turn the JSON response into PostgreSQL rows.
+
+## How the pieces fit
+
+```text
+browser ──> control plane ──SQL──> PostgreSQL + openapi_fdw
+                                      │
+Metabase ─────────PostgreSQL──────────┤
+                                      └──HTTPS──> external JSON APIs
+```
+
+The control plane can be stopped after configuration. PostgreSQL keeps serving
+the foreign tables because the data plane has no dependency on the web app.
+Likewise, Metabase talks normal PostgreSQL; it does not need an OpenAPI plugin.
+
+## Connect Metabase
+
+Add the OpenAPI FDW PostgreSQL instance as a normal PostgreSQL database in
+Metabase. In Docker Compose, use `postgres:5432` from a container on the same
+network. In CapRover, use:
+
+```text
+Host:     srv-captain--openapi-fdw-db
+Port:     5432
+Database: openapi_fdw
+User:     openapi_fdw
+Password: <the PostgreSQL password configured at deployment>
+```
+
+The exact hostname changes if the CapRover app is given another name. No public
+database port is required when Metabase is in the same CapRover cluster.
+
+Metabase schema synchronization sees the imported foreign tables and their
+typed columns. Native SQL questions work immediately. Path-based endpoints
+need an equality predicate for every placeholder, as in the CEP example above.
+
+## Use any compatible OpenAPI document
+
+The normal control-plane flow is:
+
+1. Enter an HTTPS URL to an OpenAPI 3.0 or 3.1 JSON/YAML document, or paste the
+   document inline.
+2. Optionally override its API base URL and configure authentication.
+3. Discover the GET operations, plus explicitly enabled read-only POST
+   operations.
+4. Select tables and inspect the redacted `CREATE SERVER` and
+   `IMPORT FOREIGN SCHEMA` statements.
+5. Apply the transaction, then preview live rows before connecting another
+   PostgreSQL client.
+
+BrasilAPI's `/docs` page is assembled from OpenAPI fragments at render time and
+does not expose a stable raw specification URL. The project therefore includes
+a small, reviewable [BrasilAPI OpenAPI document](examples/brasilapi.openapi.yaml)
+for its banks, rates, brokers, and CEP endpoints. It uses BrasilAPI's real
+public contracts and correct `/api` base path.
+
+## Schema evolution without table churn
+
+PostgreSQL plans queries against a fixed tuple descriptor, so no FDW can safely
+invent typed columns halfway through a query when an upstream API adds a key.
+OpenAPI FDW uses two complementary contracts:
+
+- `IMPORT FOREIGN SCHEMA` creates a useful typed snapshot of the published
+  contract.
+- `attrs jsonb` contains the complete source row and exposes new or nested keys
+  immediately.
+
+```sql
+SELECT
+  attrs ->> 'newField',
+  attrs #>> '{nested,value}'
+FROM vendor.items;
+```
+
+For an intentionally untyped endpoint, declare only `attrs jsonb`; no OpenAPI
+document is required.
+
+## Authentication and portable setup bundles
+
+The FDW understands bearer tokens, header/query API keys, static headers, and
+custom user agents. Secrets can be literal PostgreSQL server options, but the
+recommended form names an environment variable on the PostgreSQL service:
+
+```sql
+CREATE SERVER vendor
+  FOREIGN DATA WRAPPER openapi_fdw
+  OPTIONS (
+    spec_url 'https://vendor.example/openapi.json',
+    bearer_token_env 'VENDOR_API_TOKEN'
+  );
+```
+
+Equivalent options exist for `api_key_env` and `headers_env`. The environment
+variable is resolved inside the PostgreSQL process and its value is redacted
+from extension errors. API credentials are not sent to the OpenAPI document URL
+unless `spec_with_auth 'true'` is explicitly configured for a trusted private
+specification.
+
+Control-plane exports use the `openapi-fdw/v1` JSON format. Environment
+references remain portable. Literal secret values are replaced with a
+`configured` marker and must be re-entered before applying the bundle on a new
+instance. See [control-plane configuration](docs/CONTROL_PLANE.md).
+
+## SQL-only operation
+
+The web control plane is optional. Everything remains normal PostgreSQL DDL:
+
+```sql
 CREATE EXTENSION openapi_fdw;
 
 CREATE SERVER pokeapi
   FOREIGN DATA WRAPPER openapi_fdw
-  OPTIONS (base_url 'https://pokeapi.co/api/v2');
-
-CREATE FOREIGN TABLE pokemon (
-  name text,
-  height bigint,
-  weight bigint,
-  attrs jsonb
-)
-SERVER pokeapi
-OPTIONS (
-  endpoint '/pokemon/{name}',
-  pagination 'none',
-  limit_param ''
-);
-
-SELECT name, height, attrs #>> '{types,0,type,name}' AS primary_type
-FROM pokemon
-WHERE name = 'ditto';
-SQL
-```
-
-That `SELECT` makes a real HTTPS request. A path placeholder must have an
-equality predicate, and its value is percent-encoded before it is inserted into
-the URL.
-
-## The schema-drift-friendly contract
-
-PostgreSQL table columns cannot appear dynamically when an API adds a field:
-the planner needs a fixed tuple descriptor. The low-maintenance solution is a
-single JSONB column:
-
-```sql
-CREATE FOREIGN TABLE api_rows (attrs jsonb)
-SERVER pokeapi
-OPTIONS (endpoint '/pokemon', pagination 'none');
-
-SELECT attrs ->> 'name'
-FROM api_rows;
-```
-
-Each `attrs` value is the complete source row, so newly added keys are
-queryable immediately with JSONB operators and JSONPath and require no DDL
-change. Typed columns and `attrs` can coexist; imported tables include the
-catch-all by default.
-
-## Import typed tables from OpenAPI
-
-The importer accepts OpenAPI 3.0 or 3.1 in JSON or YAML. This example imports
-only PokéAPI's list operation:
-
-```sql
-CREATE SERVER pokeapi_spec
-  FOREIGN DATA WRAPPER openapi_fdw
   OPTIONS (
-    base_url 'https://pokeapi.co',
     spec_url 'https://raw.githubusercontent.com/PokeAPI/pokeapi/master/openapi.yml'
   );
 
 CREATE SCHEMA poke;
-
 IMPORT FOREIGN SCHEMA api
   LIMIT TO (pokemon_list)
-  FROM SERVER pokeapi_spec
+  FROM SERVER pokeapi
   INTO poke
   OPTIONS (methods 'GET', include_attrs 'true');
 
@@ -108,183 +181,121 @@ FROM poke.pokemon_list
 LIMIT 5;
 ```
 
-`IMPORT FOREIGN SCHEMA` is a typed snapshot. Re-import or apply deliberate DDL
-when the published contract changes; `attrs` continues to expose fields in the
-meantime. Imported identifiers are deterministic, quoted, collision-safe, and
-limited to PostgreSQL's 63-byte identifier size.
-
-The importer resolves local component `$ref` values, composition keywords,
-nullable OpenAPI 3.1 types, common collection envelopes, and GeoJSON feature
-properties. External `$ref` documents are intentionally not fetched.
-
-## Manual table examples
-
-Nested API objects can be projected before column lookup:
+Manual JSONB-only tables are equally small:
 
 ```sql
 CREATE SERVER weather
   FOREIGN DATA WRAPPER openapi_fdw
   OPTIONS (
     base_url 'https://api.weather.gov',
-    user_agent 'my-app/1.0 (https://example.com/contact)'
+    user_agent 'my-team/1.0 (contact@example.com)'
   );
 
-CREATE FOREIGN TABLE weather_point (
-  point text,
-  grid_id text,
-  grid_x bigint,
-  grid_y bigint,
-  attrs jsonb
-)
-SERVER weather
-OPTIONS (
-  endpoint '/points/{point}',
-  object_path '/properties',
-  pagination 'none',
-  limit_param ''
-);
+CREATE FOREIGN TABLE weather_point (attrs jsonb)
+  SERVER weather
+  OPTIONS (
+    endpoint '/points/{point}',
+    object_path '/properties',
+    pagination 'none',
+    limit_param ''
+  );
+
+SELECT attrs #>> '{properties,gridId}'
+FROM weather_point
+WHERE point = '39.7456,-97.0892';
 ```
 
-Column names are matched directly, through `column_map`, or by sanitized
-camelCase-to-snake_case matching. `response_path` selects a row collection;
-`object_path` selects the object used for typed projection inside each row.
-`attrs` always retains the complete row before `object_path` is applied.
+## Installation choices
 
-POST endpoints that are semantically reads are explicit:
+### Slim PostgreSQL image
 
-```sql
-CREATE FOREIGN TABLE search_results (
-  id bigint,
-  title text,
-  attrs jsonb
-)
-SERVER my_api
-OPTIONS (
-  endpoint '/search',
-  method 'POST',
-  request_body '{"query":"postgres"}',
-  response_path '/results'
-);
+Release images use the official Alpine PostgreSQL base and contain only
+PostgreSQL, CA certificates, and the native extension:
+
+```bash
+docker run --name openapi-postgres \
+  -e POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
+  -p 5432:5432 \
+  -v openapi-fdw-data:/var/lib/postgresql \
+  -d ghcr.io/sabino/openapi_fdw:pg18
 ```
 
-The wrapper never implements `INSERT`, `UPDATE`, or `DELETE`.
+Tags `pg14` through `pg18` track the latest release for each PostgreSQL major.
+Versioned tags use `v0.3.0-pg18`. The control plane is a separate stripped
+scratch image:
 
-## Options
+```text
+ghcr.io/sabino/openapi_fdw:control
+```
 
-Server options apply to the OpenAPI document and data requests.
+### Checksummed native package
 
-| Option | Default | Purpose |
-| --- | --- | --- |
-| `base_url` | derived from spec | HTTPS origin/base path for table endpoints |
-| `spec_url` / `spec_json` | none | OpenAPI document used by schema import |
-| `headers` | `{}` | JSON object of static HTTP headers |
-| `user_agent` | `openapi_fdw/0.2` | explicit User-Agent, required by some APIs |
-| `accept` | `application/json` | Accept header |
-| `api_key` | none | API key placed in a header or query parameter |
-| `api_key_location` | `header` | `header` or `query` |
-| `api_key_name` | `x-api-key` | header/query parameter name |
-| `api_key_prefix` | none | prefix such as `Token` |
-| `bearer_token` | none | `Authorization: Bearer ...` value |
-| `connect_timeout_ms` | `5000` | TCP/TLS connection timeout |
-| `request_timeout_ms` | `30000` | whole-request timeout |
-| `max_response_bytes` | `52428800` | decompressed body limit, at most 512 MiB |
-| `max_pages` | `100` | pagination safety cap |
-| `max_retries` | `2` | retries for transient network/HTTP failures |
-| `max_retry_delay_ms` | `5000` | exponential/`Retry-After` delay cap |
-| `max_redirects` | `5` | same-origin redirect cap |
-| `allow_http` | `false` | permit plaintext HTTP for trusted local services |
-| `allow_cross_origin_pagination` | `false` | forward pagination to another origin |
+On glibc Linux x86-64 with PostgreSQL development/runtime files installed:
 
-One of `base_url`, `spec_url`, or `spec_json` is required. When only the spec is
-given, the first OpenAPI server URL and its variable defaults are used.
+```bash
+curl -fsSL https://raw.githubusercontent.com/sabino/openapi_fdw/main/scripts/install.sh \
+  | sudo sh -s -- --version v0.3.0 --pg-config /usr/lib/postgresql/18/bin/pg_config
+```
 
-| Foreign-table option | Default | Purpose |
-| --- | --- | --- |
-| `endpoint` | required | relative path, optionally with `{column}` placeholders |
-| `method` | `GET` | `GET` or explicit read-only `POST` |
-| `response_path` | automatic | RFC 6901 pointer to the row collection |
-| `object_path` | none | pointer within each row for typed projection |
-| `query_params` | `{}` | static query parameters as JSON |
-| `request_body` | none | static JSON POST body |
-| `column_map` | `{}` | SQL-column to JSON-name/pointer map |
-| `query_param_map` | `{}` | SQL-column to API-query-name map |
-| `attrs_column` | `attrs` | name of the full-row JSONB column |
-| `limit_param` | `limit` | API parameter for a safe SQL limit; empty disables |
-| `page_size` / `page_size_param` | none | explicit page size and parameter name |
-| `cursor_path` / `cursor_param` | inferred / `cursor` | custom cursor pointer and request parameter |
-| `pagination` | `auto` | `auto` or `none` |
-| `max_pages` | server value | per-table page cap |
-| `on_type_error` | `error` | `error` or return `null` for that cell |
+The installer detects the PostgreSQL major, downloads its release archive,
+verifies SHA-256, and copies only the extension library, control file, and SQL
+file into the directories reported by `pg_config`.
 
-Auto-pagination understands RFC 8288 `Link`, common `next` URL fields, and
-cursor fields. Duplicate tokens, cross-origin URLs, and page-cap overruns fail
-closed.
+### Build from source
 
-## SQL semantics and performance
-
-- Simple equality predicates are sent as API query parameters. Placeholders
-  consume equality predicates as path parameters. PostgreSQL still applies its
-  local filter.
-- `LIMIT + OFFSET` bounds the remote fetch only when there is no local filter or
-  sort that could change correctness. PostgreSQL applies `OFFSET` itself.
-- Sorting is local; there is no generic ordering vocabulary shared by all APIs.
-- Each scan reads live remote data. There is no hidden cache.
-- HTTP clients and connections are pooled per PostgreSQL backend. The backend
-  remains occupied while waiting for the remote service, as with other
-  synchronous FDWs.
-
-On the recorded PG18/local-API benchmark, one typed scan with one pooled HTTP
-request had a 0.836 ms median and 1.129 ms p95 (1,153 scans/s) in one backend.
-Eight backends had a 3.834 ms median and 1,940 scans/s total. Direct HTTP against
-the same test server averaged 0.313 ms, putting the SQL/FDW/JSON/tuple portion
-near 0.6 ms in that environment. See
-[the benchmark notes](docs/BENCHMARKS.md) before comparing these numbers with a
-network API.
-
-## Security and operations
-
-Only HTTPS is accepted by default. TLS certificates are verified. Redirects,
-response bodies, timeouts, retries, and pagination are bounded, and credentials
-are redacted from extension-generated errors.
-
-Creating/configuring a foreign server authorizes outbound traffic; this is not
-an SSRF sandbox. API credentials are currently server options and therefore
-stored unencrypted in PostgreSQL catalogs. Restrict ownership and catalog
-access accordingly. The current Wrappers framework does not expose user-mapping
-options to the FDW constructor, so per-role secret mappings are not yet
-supported.
-
-Complex JSONB predicates work and are evaluated locally, but the current
-`supabase-wrappers` planner emits an `unsupported qual` warning for expressions
-it cannot push down. This is noisy, not a correctness failure, and is tracked as
-an upstream framework limitation.
-
-## Native installation
-
-Docker or the release images are the shortest route. For a host installation,
-install the development package for the exact PostgreSQL major, Rust 1.88 or
-newer, and `cargo-pgrx` 0.16.1, then run:
+Install Rust 1.88+, `cargo-pgrx` 0.16.1, libclang, and the development package
+for the exact PostgreSQL major, then:
 
 ```bash
 cargo pgrx init --pg18="$(command -v pg_config)"
 cargo pgrx install --release --no-default-features --features pg18
 ```
 
-Use the matching feature (`pg14` through `pg18`) and `pg_config`. A shared
-library built for one PostgreSQL major must not be copied to another.
+A library built for one PostgreSQL major or C library must not be copied to an
+incompatible server. More detail is in [installation and deployment](docs/DEPLOYMENT.md).
 
-## Validation
+## HTTP and SQL behavior
 
-Pull requests build and run a real PostgreSQL integration suite for versions 14
-through 18. The suite starts a deterministic HTTP server and covers OpenAPI
-import, JSONB drift, typed scalars/arrays, timestamps, path/query/LIMIT
-behavior, pagination, GeoJSON, POST, retries, auth headers, response bounds,
-content types, and hostile pagination.
+- OpenAPI 3.0/3.1 JSON or YAML, local component `$ref`, compositions, arrays,
+  common envelopes, and GeoJSON are supported.
+- GET and explicitly configured read-only POST scans are supported. The FDW
+  never implements `INSERT`, `UPDATE`, or `DELETE` against an API.
+- HTTPS certificate verification is on by default. Plain HTTP requires an
+  explicit opt-in.
+- Connections are pooled per PostgreSQL backend. Timeouts, decompressed body
+  size, redirects, retries, pagination pages, and retry delay are bounded.
+- Same-origin redirects and pagination are enforced by default.
+- Path placeholders and simple equality predicates become path/query
+  parameters. PostgreSQL still retains local correctness checks.
+- Remote `LIMIT` is used only when local filters or sorting cannot change the
+  result. Sorting remains local.
+- Each scan reads the remote service live. There is no hidden cache or local
+  dataset unless the user deliberately materializes a query.
 
-An independent scheduled workflow queries PokéAPI, BrasilAPI, and the US
-National Weather Service over live HTTPS. Public-service availability is never
-the only merge oracle. The selection and observed contracts are recorded in
-[the API research notes](docs/API_RESEARCH.md).
+The complete option reference and security boundaries are in
+[the architecture document](docs/ARCHITECTURE.md).
+
+## Performance and validation
+
+The deterministic suite loads the actual extension, starts a real HTTP origin,
+and runs PostgreSQL integration tests on versions 14 through 18. A separate
+control-plane test covers authentication, discovery, SQL preview, transactional
+DDL, live row browsing, export, and removal. Scheduled smoke tests query
+PokéAPI, BrasilAPI, and the US National Weather Service over public HTTPS.
+
+On the recorded PostgreSQL 18/local-origin benchmark, one typed scan had a
+0.836 ms median and 1.129 ms p95 at 1,153 scans/s in one backend. Eight backends
+reached 1,940 scans/s. Public network latency normally dominates; see
+[benchmark methodology and results](docs/BENCHMARKS.md).
+
+## Documentation
+
+- [Control plane and bundle format](docs/CONTROL_PLANE.md)
+- [Installation, containers, CapRover, and Metabase](docs/DEPLOYMENT.md)
+- [Architecture and trade-offs](docs/ARCHITECTURE.md)
+- [Original prototype audit](docs/AUDIT.md)
+- [Public API research](docs/API_RESEARCH.md)
+- [Benchmarks](docs/BENCHMARKS.md)
 
 ## License
 

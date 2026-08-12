@@ -78,4 +78,4 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=12 \
 
 LABEL org.opencontainers.image.source="https://github.com/sabino/openapi_fdw" \
       org.opencontainers.image.description="PostgreSQL ${PG_MAJOR} with the native OpenAPI FDW" \
-      org.opencontainers.image.version="0.3.0"
+      org.opencontainers.image.version="0.3.1"

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 - 2026-08-12
+
+- Preserve pgrx's versioned shared-library filename in native release archives
+  and installations, and test the archive contract before publishing a tag.
+
 ## 0.3.0 - 2026-08-12
 
 - Add a small, stateless Rust control plane with token authentication, OpenAPI

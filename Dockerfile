@@ -35,7 +35,12 @@ COPY --from=toolchain /root/.cargo/bin/cargo-pgrx /cargo-pgrx
 FROM toolchain AS builder
 ARG PG_MAJOR
 
-ENV PATH=/root/.cargo/bin:${PATH}
+# Rust's musl target is fully static by default. pgrx runs bindgen while it is
+# compiling, so its build script must be able to dlopen Alpine's libclang.
+# Disabling only the C-runtime static feature keeps the exported cargo-pgrx
+# driver portable while allowing the extension build to load libclang.
+ENV PATH=/root/.cargo/bin:${PATH} \
+    RUSTFLAGS="-C target-feature=-crt-static"
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock openapi_fdw.control ./

@@ -29,9 +29,9 @@ esac
 
 library=$(find "$package_root" -type f -name 'openapi_fdw-*.so' -print -quit)
 control=$(find "$package_root" -type f -name openapi_fdw.control -print -quit)
-sql=$(find "$package_root" -type f -name 'openapi_fdw--*.sql' -print -quit)
+sql_files=$(find "$package_root" -type f -name 'openapi_fdw--*.sql' -print)
 
-test -n "$library" && test -n "$control" && test -n "$sql" || {
+test -n "$library" && test -n "$control" && test -n "$sql_files" || {
   printf '%s\n' \
     'pgrx package export is incomplete; expected a versioned library, control file, and SQL file' >&2
   exit 1
@@ -41,7 +41,10 @@ mkdir -p "$output_dir"
 staging=$(mktemp -d "${TMPDIR:-/tmp}/openapi-fdw-package.XXXXXX")
 trap 'find "$staging" -xdev -depth -delete' EXIT HUP INT TERM
 
-cp "$library" "$control" "$sql" "$staging/"
+cp "$library" "$control" "$staging/"
+for sql_file in $sql_files; do
+  cp "$sql_file" "$staging/"
+done
 archive="openapi_fdw-${version}-pg${pg_major}-linux-amd64.tar.gz"
 tar -C "$staging" -czf "$output_dir/$archive" .
 (cd "$output_dir" && sha256sum "$archive" >"$archive.sha256")

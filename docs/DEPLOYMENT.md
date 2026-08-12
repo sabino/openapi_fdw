@@ -42,8 +42,8 @@ The data-plane tags are:
 ```text
 ghcr.io/sabino/openapi_fdw:pg18
 ghcr.io/sabino/openapi_fdw:pg18-alpine
-ghcr.io/sabino/openapi_fdw:v0.3.1-pg18
-ghcr.io/sabino/openapi_fdw:v0.3.1-pg18-alpine
+ghcr.io/sabino/openapi_fdw:v0.3.2-pg18
+ghcr.io/sabino/openapi_fdw:v0.3.2-pg18-alpine
 ```
 
 Replace `18` with 14, 15, 16, or 17 as needed. Floating `pgN` tags follow the
@@ -55,7 +55,7 @@ The control-plane tags are:
 
 ```text
 ghcr.io/sabino/openapi_fdw:control
-ghcr.io/sabino/openapi_fdw:v0.3.1-control
+ghcr.io/sabino/openapi_fdw:v0.3.2-control
 ```
 
 It is a stripped static executable in `scratch`, runs as UID/GID 65532, embeds
@@ -104,7 +104,7 @@ glibc Linux x86-64 with the matching PostgreSQL runtime/development files:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sabino/openapi_fdw/main/scripts/install.sh \
-  | sudo sh -s -- --version v0.3.1 \
+  | sudo sh -s -- --version v0.3.2 \
       --pg-config /usr/lib/postgresql/18/bin/pg_config
 ```
 

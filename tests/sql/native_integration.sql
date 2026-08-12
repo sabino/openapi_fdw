@@ -53,6 +53,13 @@ DECLARE
   actual_tags text[];
   actual_timestamp timestamptz;
 BEGIN
+  SELECT count(*)
+    INTO number
+    FROM imported.get_by_slug;
+  IF number <> 0 THEN
+    RAISE EXCEPTION 'unbound path lookup should be empty, got % rows', number;
+  END IF;
+
   SELECT array_agg(id ORDER BY id)
     INTO actual_ids
     FROM imported.list_items;
@@ -274,6 +281,10 @@ BEGIN
        AND attrs #>> '{query,limit,0}' = '1'
   ) THEN
     RAISE EXCEPTION 'SQL LIMIT was not sent as an API limit';
+  END IF;
+  IF (SELECT count(*) FROM request_log
+       WHERE attrs ->> 'path' LIKE '/api/by-slug/%') <> 1 THEN
+    RAISE EXCEPTION 'an unbound path lookup made an HTTP request';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM request_log

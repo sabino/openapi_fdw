@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "openapi_fdw"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.88"
 description = "A native PostgreSQL foreign data wrapper for JSON and OpenAPI services"

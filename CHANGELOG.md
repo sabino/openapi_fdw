@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2 - 2026-08-12
+
+- Treat path-template tables without all required equality predicates as empty
+  parameterized lookups without making an HTTP request. This lets PostgreSQL
+  catalog consumers and BI schema synchronization register the declared fields
+  while preserving live requests for bound lookups.
+- Ship and install the `0.3.1` to `0.3.2` extension upgrade script alongside
+  the initial SQL file in container and native packages.
+
 ## 0.3.1 - 2026-08-12
 
 - Preserve pgrx's versioned shared-library filename in native release archives

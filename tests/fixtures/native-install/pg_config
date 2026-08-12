@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+case "${1-}" in
+  --version) printf '%s\n' 'PostgreSQL 18.0' ;;
+  --pkglibdir) printf '%s\n' "$TEST_NATIVE_INSTALL_ROOT/lib" ;;
+  --sharedir) printf '%s\n' "$TEST_NATIVE_INSTALL_ROOT/share" ;;
+  *)
+    printf 'Unsupported pg_config test argument: %s\n' "${1-}" >&2
+    exit 1
+    ;;
+esac

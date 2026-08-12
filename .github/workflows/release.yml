@@ -70,13 +70,8 @@ jobs:
           PG_MAJOR: ${{ matrix.pg }}
           VERSION: ${{ github.ref_name }}
         run: |
-          mkdir -p /tmp/release
-          cp "$(find /tmp/openapi-fdw-package -type f -name openapi_fdw.so -print -quit)" /tmp/release/
-          cp "$(find /tmp/openapi-fdw-package -type f -name openapi_fdw.control -print -quit)" /tmp/release/
-          cp "$(find /tmp/openapi-fdw-package -type f -name 'openapi_fdw--*.sql' -print -quit)" /tmp/release/
-          archive="openapi_fdw-${VERSION}-pg${PG_MAJOR}-linux-amd64.tar.gz"
-          tar -C /tmp/release -czf "$archive" .
-          sha256sum "$archive" >"$archive.sha256"
+          scripts/package-native.sh \
+            /tmp/openapi-fdw-package "$VERSION" "$PG_MAJOR" "$GITHUB_WORKSPACE"
       - uses: actions/upload-artifact@v7
         with:
           name: native-pg${{ matrix.pg }}

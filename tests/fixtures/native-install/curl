@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+output=
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output)
+      output=${2:?--output requires a path}
+      shift 2
+      ;;
+    *)
+      url=$1
+      shift
+      ;;
+  esac
+done
+
+test -n "$output"
+case "$url" in
+  *.sha256) cp "$TEST_NATIVE_CHECKSUM" "$output" ;;
+  *.tar.gz) cp "$TEST_NATIVE_ARCHIVE" "$output" ;;
+  *)
+    printf 'Unexpected test URL: %s\n' "$url" >&2
+    exit 1
+    ;;
+esac

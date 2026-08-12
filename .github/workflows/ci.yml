@@ -26,9 +26,9 @@ jobs:
       - name: Check shell scripts
         run: >-
           sh -n scripts/install.sh scripts/package-native.sh
-          tests/control_plane.sh tests/package_native.sh
+          tests/control_plane.sh tests/install_native.sh tests/package_native.sh
       - name: Test native release packaging
-        run: tests/package_native.sh
+        run: tests/package_native.sh && tests/install_native.sh
       - name: Parse shipped YAML
         run: |
           ruby -ryaml -e 'ARGV.each { |path| YAML.load_file(path) }' \

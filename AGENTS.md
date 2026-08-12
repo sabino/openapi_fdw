@@ -1,59 +1,118 @@
-# Guidance for AAzqasz
+# Global browser automation guidance
 
-Welcome to **CoinCap Foreign Data Wrapper (FDW)**. This project exposes cryptocurrency data from [CoinCap](https://coincap.io) through PostgreSQL using the Multicorn FDW framework. It is implemented primarily in Python with a small portion in [Hy](https://github.com/hylang/hy), a Lisp dialect that compiles to Python.
+These are personal defaults for every Codex workspace. More specific project
+instructions may refine them, but must preserve the separation between the
+agent-browser-managed Chrome session and the disabled legacy Chrome DevTools
+profile.
 
-## What the project does
+## Default browser workflow
 
-CoinCap FDW lets you create a PostgreSQL foreign table that proxies a CoinCap API endpoint (by default `https://rest.coincap.io/v3/assets`). Queries against this table trigger HTTP requests to fetch the data and return the JSON fields matching the table columns. The wrapper is read‐only and meant as a simple reference implementation for FDW development.
+- For interactive website work, authenticated browsing, web UI testing,
+  dev-server verification, DOM inspection, navigation, form entry, JavaScript
+  execution, screenshots, or frontend validation, use the
+  `vercel:agent-browser` skill and the installed `agent-browser` CLI/MCP tools.
+- When that skill applies, read its `SKILL.md` and use its core sequence:
+  navigate, take an interactive semantic snapshot, interact through fresh
+  element refs, and re-snapshot after page or DOM changes.
+- The configured default engine is Chrome. Use plain `agent-browser` commands;
+  `/home/sabino/.local/bin/agent-browser-chrome` is an equivalent compatibility
+  alias. Both address the same default socket-backed Chrome singleton.
+- Reuse that default session across Codex instances. Do not create extra browser
+  daemons unless isolation is materially necessary. Close it when the task is
+  finished so restore state is saved and resources stop; the 10-minute idle
+  timeout remains a fallback.
+- Use headless Chrome by default. Use `agent-browser --headed ...` only when the
+  user asks to see or manually interact with the rendered browser.
+- Do not substitute browser automation for ordinary public-web research when
+  search or a direct fetch is sufficient.
 
-Key components:
+## Frontend and visual verification
 
-- `coincap_fdw/api.py` &ndash; minimal helper to perform HTTP requests to a CoinCap endpoint.
-- `coincap_fdw/wrapper.py` and `coincap_fdw/wrapper.hy` &ndash; the `CoinCapForeignDataWrapper` class used by Multicorn. The Hy source mirrors the Python version.
-- `tests/` &ndash; unit and integration tests showing how the wrapper is expected to behave.
+- When correctness depends on rendered pixels or browser layout, also use the
+  `vercel:agent-browser-verify` skill. This includes screenshots, screenshot
+  diffs, responsive layout, CSS, fonts, canvas, SVG appearance, clipping,
+  overlap, spacing, color, animation, and frontend visual regressions.
+- For reproducible screenshots, set an explicit viewport, wait for the relevant
+  page state, capture the artifact, and inspect the resulting image. For visual
+  comparisons, keep engine, viewport, device scale, color scheme, and page state
+  identical between baseline and candidate.
+- A normal visual workflow is:
 
-## How it works
+  ```bash
+  agent-browser open <url>
+  agent-browser set viewport 1440 900
+  agent-browser wait --load networkidle
+  agent-browser snapshot -i
+  agent-browser screenshot --full <artifact.png>
+  agent-browser diff screenshot --baseline <baseline.png>
+  agent-browser close
+  ```
 
-1. Install the package (and Multicorn) in your PostgreSQL environment:
-   ```bash
-   pip install coincap-fdw
-   ```
-2. Enable Multicorn and define a server pointing at the wrapper class:
-   ```sql
-   CREATE EXTENSION multicorn;
-   CREATE SERVER coincap
-       FOREIGN DATA WRAPPER multicorn
-       OPTIONS (wrapper 'coincap_fdw.CoinCapForeignDataWrapper',
-                base_url 'https://rest.coincap.io/v3',
-                endpoint 'assets',
-                api_key '<your API key>');
-   ```
-   The `base_url` and `endpoint` options are configurable when you create the server.
-3. Create a foreign table describing the columns you want to expose and query it like a normal table. Each query fetches from the configured CoinCap endpoint.
+- The agent-browser dashboard may display the live screencast from this Chrome
+  session. Treat a connected dashboard as observability, not as a replacement
+  for saving and inspecting required screenshot artifacts.
 
-For a full example see `README.md`.
+## Lightpanda boundary
 
-## Running tests
+- Lightpanda remains installed for explicitly requested low-resource semantic
+  workloads, but it is not the default and must not be used for screenshots,
+  visual comparison, frontend pixel validation, or a dashboard viewport.
+- Never combine a Chrome executable override with the Lightpanda engine.
+  Lightpanda has no graphical renderer, and its placeholder image is not visual
+  evidence.
+- Browser restore files contain authentication secrets. Never print cookie
+  values, place restore state in a repository, or loosen its private file
+  permissions.
 
-The project uses the built-in `unittest` module. Run all tests with:
-```bash
-python -m unittest discover -s tests -v
-```
-This command executes both unit and integration tests without requiring the real Multicorn extension.
+## Disabled legacy Chrome path
 
-## Repository layout
+- Do not use or start the `chrome-devtools` MCP server, the
+  `/home/sabino/.codex/bin/codex-chrome-devtools-mcp` wrapper, the
+  `codex-chrome-browser.service` user service, or the dedicated
+  `/home/sabino/.codex/chrome-devtools-profile` profile.
+- This legacy Chrome path is retained only as disabled compatibility data. Do
+  not attach to it, inspect it, modify it, or migrate data from it unless the
+  user explicitly requests that legacy fallback for the current task.
+- Authorization to use Chrome through `agent-browser` does not authorize
+  re-enabling the `chrome-devtools` MCP or accessing the retained legacy profile.
 
-```
-coincap_fdw/
-├── coincap_fdw/      # Source package
-│   ├── __init__.py   # Package initializer
-│   ├── api.py        # API helper functions
-│   ├── wrapper.hy    # FDW implementation in Hy
-│   └── wrapper.py    # FDW implementation in Python
-├── tests/            # Unit and integration tests
-├── requirements.txt  # Runtime dependencies
-├── setup.py          # Packaging metadata
-└── README.md         # Project overview and usage
-```
+--- project-doc ---
 
-This should give you enough context to start exploring the code. The wrapper itself is small and can serve as a template for other FDWs.
+# OpenAPI FDW contributor guidance
+
+This repository implements a native, read-only PostgreSQL FDW for JSON HTTP
+APIs. The runtime is Rust with pgrx and Supabase Wrappers. The former
+Hy/Python/Multicorn implementation is historical and must not be reintroduced
+as an in-database dependency.
+
+## Important paths
+
+- `src/fdw.rs`: PostgreSQL scan/import callbacks and JSON-to-cell conversion.
+- `src/http.rs`: bounded pooled HTTP client, redirects, retries, and spec fetch.
+- `src/spec.rs`: OpenAPI 3.0/3.1 import and safe SQL generation.
+- `src/options.rs`: validated server/table options and credential redaction.
+- `tests/mock_api.py`: deterministic real HTTP origin for integration tests.
+- `tests/sql/native_integration.sql`: end-to-end PostgreSQL assertions.
+- `Dockerfile`: per-PostgreSQL-major build and minimal runtime image.
+
+## Validation
+
+Use `cargo fmt --all -- --check` for the quick local check. A full validation
+must build the extension for the target PostgreSQL major, run an actual
+PostgreSQL server, and execute `tests/sql/native_integration.sql` against the
+deterministic API. Mock-only Rust/Python results are not sufficient evidence.
+
+The CI matrix covers PostgreSQL 14 through 18. Live public API checks are
+separate from deterministic merge checks because external availability is not
+under this project's control.
+
+## Resource and safety constraints
+
+Rust/pgrx release builds can create roughly 2 GiB of intermediates. On a
+constrained workstation, use a bounded tmpfs target or let CI build the matrix.
+Never broadly prune Docker images, build cache, or volumes; remove only exact
+task-owned artifacts after confirming their identity.
+
+Keep HTTPS verification enabled by default, preserve response/time/page caps,
+never include credentials in errors or fixtures, and do not forward redirects
+or pagination across origins without an explicit opt-in.

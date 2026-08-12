@@ -92,7 +92,10 @@ runtime.
 - Real `CREATE EXTENSION`, `CREATE SERVER`, `CREATE FOREIGN TABLE`, and
   `IMPORT FOREIGN SCHEMA` behavior.
 - Equality qual pushdown to path and query parameters.
-- `LIMIT` and `OFFSET` pushdown through configurable parameter names.
+- SQL `LIMIT` bounds the remote fetch through a configurable parameter when no
+  local filter or sort could change correctness. SQL `OFFSET` remains local:
+  the FDW requests `LIMIT + OFFSET` rows so PostgreSQL can apply the offset
+  exactly once, as required by the Wrappers scan contract.
 - Planner estimates that do not claim a local table-sized cost for a remote
   HTTP request.
 - Useful `EXPLAIN VERBOSE` details without credentials.
@@ -127,9 +130,10 @@ runtime.
   its configured destination. The extension is not an SSRF sandbox.
 - Secrets must never appear in PostgreSQL errors, `EXPLAIN`, debug logs, or test
   artifacts.
-- Server options in PostgreSQL catalogs are not encrypted. Documentation must
-  prefer user mappings or an external secret facility when available and state
-  the catalog visibility tradeoff when static secrets are used.
+- Server options in PostgreSQL catalogs are not encrypted. The current Wrappers
+  constructor does not expose user mappings, so documentation must state the
+  catalog visibility tradeoff and require restrictive ownership/access until a
+  per-role or external secret facility is implemented.
 - Redirects, response size, request time, retries, and pagination are bounded.
 - Dynamic DDL generated from OpenAPI uses identifier/literal quoting rather
   than string interpolation.
@@ -167,6 +171,17 @@ and warm/cold connection state. They report at least median and p95 for:
 The native implementation must not have the roughly 170-180 ms fixed scan cost
 documented by the reference Wasm implementation. Network time, HTTP decoding,
 and PostgreSQL tuple construction are reported separately where practical.
+
+The implemented PG18 benchmark is recorded in
+[`BENCHMARKS.md`](BENCHMARKS.md). A one-request typed scan measured 0.836 ms
+median and 1.129 ms p95 in one backend; JSONB-only and typed-plus-JSONB scans
+were within 0.03 ms of that median. The deterministic PG18 suite and live
+PokéAPI, BrasilAPI, and api.weather.gov queries all passed on the decision date.
+
+One framework limitation remains: current `supabase-wrappers` warns when a
+predicate (notably a JSONB expression) cannot be represented as a pushdown
+`Qual`. PostgreSQL retains and correctly evaluates the predicate locally, so
+this is log noise rather than a result-integrity defect.
 
 ## Stack plan
 

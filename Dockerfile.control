@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+FROM rust:1.88-alpine AS builder
+
+RUN apk add --no-cache musl-dev
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY openapi_fdw.control ./
+COPY sql ./sql
+COPY src ./src
+COPY control-plane ./control-plane
+
+RUN --mount=type=cache,id=openapi-fdw-control-target,target=/build/target,sharing=locked \
+    cargo build --locked --release --package openapi-fdw-control \
+    && strip /build/target/release/openapi-fdw-control \
+    && cp /build/target/release/openapi-fdw-control /openapi-fdw-control
+
+FROM scratch
+COPY --from=builder /openapi-fdw-control /openapi-fdw-control
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/openapi-fdw-control"]
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=6 \
+    CMD ["/openapi-fdw-control", "healthcheck"]
+
+LABEL org.opencontainers.image.source="https://github.com/sabino/openapi_fdw" \
+      org.opencontainers.image.description="Small web control plane for OpenAPI FDW" \
+      org.opencontainers.image.version="0.3.0"

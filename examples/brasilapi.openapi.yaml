@@ -1,0 +1,172 @@
+openapi: 3.1.0
+info:
+  title: BrasilAPI tables for OpenAPI FDW
+  version: 2026-08-12
+  description: >-
+    A small, stable OpenAPI view over public BrasilAPI endpoints. BrasilAPI's
+    own documentation is assembled from OpenAPI fragments at render time; this
+    file supplies a directly fetchable document and corrects the public /api
+    base path for automated consumers.
+servers:
+  - url: https://brasilapi.com.br/api
+paths:
+  /banks/v1:
+    get:
+      operationId: banks
+      summary: Brazilian financial institutions
+      responses:
+        "200":
+          description: Financial institutions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bank"
+  /taxas/v1:
+    get:
+      operationId: interest_rates
+      summary: Current Brazilian interest rates
+      responses:
+        "200":
+          description: Current rates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InterestRate"
+  /cvm/corretoras/v1:
+    get:
+      operationId: brokers
+      summary: CVM-regulated brokers
+      responses:
+        "200":
+          description: Brokers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Broker"
+  /cep/v2/{cep}:
+    get:
+      operationId: address_by_cep
+      summary: Address and location by Brazilian postal code
+      parameters:
+        - name: cep
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9]{8}$"
+      responses:
+        "200":
+          description: Address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Address"
+components:
+  schemas:
+    Bank:
+      type: object
+      properties:
+        ispb:
+          type: string
+        name:
+          type: string
+        code:
+          type: [integer, "null"]
+          format: int32
+        fullName:
+          type: string
+        cnpj:
+          type: [string, "null"]
+        headquarters_address:
+          type: [object, "null"]
+          additionalProperties: true
+        address_source:
+          type: [string, "null"]
+        address_last_sync:
+          type: [string, "null"]
+          format: date-time
+        address_confidence:
+          type: [string, "null"]
+        logo_url:
+          type: [string, "null"]
+    InterestRate:
+      type: object
+      properties:
+        nome:
+          type: string
+        valor:
+          type: number
+          format: double
+    Broker:
+      type: object
+      properties:
+        cnpj:
+          type: string
+        type:
+          type: string
+        nome_social:
+          type: string
+        nome_comercial:
+          type: string
+        status:
+          type: string
+        email:
+          type: string
+        telefone:
+          type: string
+        cep:
+          type: string
+        pais:
+          type: string
+        uf:
+          type: string
+        municipio:
+          type: string
+        bairro:
+          type: string
+        complemento:
+          type: string
+        logradouro:
+          type: string
+        data_patrimonio_liquido:
+          type: string
+          format: date
+        valor_patrimonio_liquido:
+          type: string
+        codigo_cvm:
+          type: string
+        data_inicio_situacao:
+          type: string
+          format: date
+        data_registro:
+          type: string
+          format: date
+    Address:
+      type: object
+      properties:
+        cep:
+          type: string
+        state:
+          type: string
+        city:
+          type: string
+        neighborhood:
+          type: string
+        street:
+          type: string
+        service:
+          type: string
+        ibge:
+          type: object
+          additionalProperties: true
+        timezoneName:
+          type: string
+        location:
+          type: object
+          additionalProperties: true

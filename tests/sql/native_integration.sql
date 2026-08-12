@@ -47,6 +47,7 @@ DO $test$
 DECLARE
   actual_ids bigint[];
   actual_id bigint;
+  actual_count bigint;
   actual_name text;
   actual_color text;
   actual_future text;
@@ -54,10 +55,10 @@ DECLARE
   actual_timestamp timestamptz;
 BEGIN
   SELECT count(*)
-    INTO number
+    INTO actual_count
     FROM imported.get_by_slug;
-  IF number <> 0 THEN
-    RAISE EXCEPTION 'unbound path lookup should be empty, got % rows', number;
+  IF actual_count <> 0 THEN
+    RAISE EXCEPTION 'unbound path lookup should be empty, got % rows', actual_count;
   END IF;
 
   SELECT array_agg(id ORDER BY id)

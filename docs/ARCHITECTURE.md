@@ -32,7 +32,8 @@ an already planned query.
 There are two honest interfaces:
 
 1. `IMPORT FOREIGN SCHEMA` reads an OpenAPI document and creates a typed schema
-   snapshot. Re-run a deliberate migration when that contract changes.
+   snapshot. Deliberately replace or refresh that snapshot when the typed
+   contract changes.
 2. An `attrs jsonb` column stays stable while its keys evolve. PostgreSQL 18's
    JSONB operators and JSONPath can query nested fields without changing DDL.
 
@@ -61,7 +62,10 @@ matters for local and low-latency services.
 ## Target architecture
 
 ```text
-PostgreSQL planner/executor
+browser --> stateless Rust control plane -- reviewed SQL --> PostgreSQL catalogs
+                                                        |
+                                                        v
+PostgreSQL planner/executor <---------------------- Metabase / SQL clients
         |
         v
 supabase-wrappers native FDW callbacks
@@ -82,7 +86,8 @@ JSON decoder / type coercion / attrs jsonb row projection
 
 The extension is loaded directly with `CREATE EXTENSION openapi_fdw`. It does
 not require Python, Hy, Multicorn, a sidecar service, or a Wasm artifact at
-runtime.
+runtime. The optional control plane issues ordinary PostgreSQL DDL and can be
+stopped after configuration; it is never on the scan path.
 
 ## Required behavior
 
@@ -107,7 +112,8 @@ runtime.
   and `anyOf` handled conservatively.
 - Server URL selection and server-variable defaults.
 - GET plus explicit POST-for-read endpoints.
-- Static headers, API keys, bearer tokens, and credential redaction.
+- Static headers, API keys, bearer tokens, environment-resolved credentials,
+  and credential redaction.
 - Connection pooling, TLS verification, connect/request timeouts, decompression,
   bounded response bodies, retry/backoff for transient statuses, and
   `Retry-After` support.
@@ -128,13 +134,15 @@ runtime.
 
 - Creating a foreign server is privileged and authorizes outbound requests to
   its configured destination. The extension is not an SSRF sandbox.
-- Secrets must never appear in PostgreSQL errors, `EXPLAIN`, debug logs, or test
-  artifacts.
-- Server options in PostgreSQL catalogs are not encrypted. The current Wrappers
-  constructor does not expose user mappings, so documentation must state the
-  catalog visibility tradeoff and require restrictive ownership/access until a
-  per-role or external secret facility is implemented.
+- Secrets must never appear in PostgreSQL errors, `EXPLAIN`, control-plane SQL
+  previews, exported bundles, debug logs, or test artifacts.
+- Literal server options in PostgreSQL catalogs are not encrypted. Environment
+  references avoid catalog storage and are the preferred production path, but
+  are still process-wide rather than per-role credentials. Restrictive
+  ownership and catalog access remain required.
 - Redirects, response size, request time, retries, and pagination are bounded.
+- API credentials are not forwarded to a separately hosted OpenAPI document
+  unless `spec_with_auth` is explicitly enabled.
 - Dynamic DDL generated from OpenAPI uses identifier/literal quoting rather
   than string interpolation.
 
@@ -151,7 +159,7 @@ Live opt-in smoke tests use several independent public APIs:
 | --- | --- |
 | [PokéAPI](https://github.com/PokeAPI/pokeapi/blob/master/openapi.yml) | OpenAPI 3.1, no auth, `results` envelope, offset/URL pagination, list and path-parameter detail endpoints |
 | [National Weather Service](https://www.weather.gov/documentation/services-web-api) | Official live OpenAPI document, required User-Agent, GeoJSON, nested properties, cursor-like pagination |
-| [BrasilAPI](https://github.com/BrasilAPI/BrasilAPI) | Real Portuguese/Brazilian data and no published OpenAPI file; validates the JSONB-only manual-table path |
+| [BrasilAPI](https://github.com/BrasilAPI/BrasilAPI) | Real Portuguese/Brazilian data; its rendered docs have no stable raw spec URL, so this repository supplies a small reviewable contract with the correct `/api` base path |
 | GitHub REST | Optional authenticated test for API keys, rate limits, and RFC 8288 Link pagination |
 
 Live services are never the only CI oracle; their availability and contracts
@@ -183,14 +191,12 @@ predicate (notably a JSONB expression) cannot be represented as a pushdown
 `Qual`. PostgreSQL retains and correctly evaluates the predicate locally, so
 this is log noise rather than a result-integrity defect.
 
-## Stack plan
+## Delivered layers
 
-1. **Architecture and audit** — this decision plus reproducible baseline
-   evidence.
-2. **Native runtime** — Rust extension, deterministic PostgreSQL integration
-   suite, and a Docker development image.
-3. **Production hardening** — current-major CI/package matrix, live API smoke
-   tests, benchmarks, security/operations documentation, and migration notes.
-
-Each branch is based on the previous branch so the pull requests can be reviewed
-and merged as a stack.
+1. **Native data plane** — Rust FDW, deterministic PostgreSQL integration,
+   schema import, JSONB fallback, bounded HTTP, pushdown, and per-major images.
+2. **Operational hardening** — PostgreSQL 14 through 18 CI/packages, public API
+   smoke tests, benchmarks, and security documentation.
+3. **Optional control plane** — a separate static Rust binary for source
+   discovery, redacted SQL review, transactional reconciliation, live row
+   previews, and portable setup bundles.

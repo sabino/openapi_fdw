@@ -14,7 +14,7 @@ use supabase_wrappers::prelude::*;
 use uuid::Uuid;
 
 #[wrappers_fdw(
-    version = "0.2.0",
+    version = "0.3.0",
     author = "Sabino",
     website = "https://github.com/sabino/openapi_fdw",
     error_type = "OpenApiFdwError"
@@ -682,13 +682,16 @@ const SERVER_OPTIONS: &[&str] = &[
     "spec_url",
     "spec_json",
     "headers",
+    "headers_env",
     "user_agent",
     "accept",
     "api_key",
+    "api_key_env",
     "api_key_location",
     "api_key_name",
     "api_key_prefix",
     "bearer_token",
+    "bearer_token_env",
     "connect_timeout_ms",
     "request_timeout_ms",
     "max_response_bytes",
@@ -698,6 +701,7 @@ const SERVER_OPTIONS: &[&str] = &[
     "max_redirects",
     "allow_http",
     "allow_cross_origin_pagination",
+    "spec_with_auth",
 ];
 
 const TABLE_OPTIONS: &[&str] = &[

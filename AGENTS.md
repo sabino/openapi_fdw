@@ -91,9 +91,14 @@ as an in-database dependency.
 - `src/http.rs`: bounded pooled HTTP client, redirects, retries, and spec fetch.
 - `src/spec.rs`: OpenAPI 3.0/3.1 import and safe SQL generation.
 - `src/options.rs`: validated server/table options and credential redaction.
+- `control-plane/`: stateless Rust web UI/API for discovery and transactional
+  configuration; it stores only redacted source definitions.
+- `examples/brasilapi.openapi.yaml`: directly importable public demo contract.
 - `tests/mock_api.py`: deterministic real HTTP origin for integration tests.
 - `tests/sql/native_integration.sql`: end-to-end PostgreSQL assertions.
+- `tests/control_plane.sh`: browser-independent control-plane integration flow.
 - `Dockerfile`: per-PostgreSQL-major build and minimal runtime image.
+- `Dockerfile.control`: stripped static control-plane image.
 
 ## Validation
 
@@ -105,6 +110,12 @@ deterministic API. Mock-only Rust/Python results are not sufficient evidence.
 The CI matrix covers PostgreSQL 14 through 18. Live public API checks are
 separate from deterministic merge checks because external availability is not
 under this project's control.
+
+Control-plane changes must also pass
+`cargo test --locked --package openapi-fdw-control`, `node --check
+control-plane/assets/app.js`, and the real PostgreSQL flow in
+`tests/control_plane.sh`. If rendered behavior changes, verify it through the
+configured `agent-browser` Chrome session at desktop and narrow viewports.
 
 ## Resource and safety constraints
 

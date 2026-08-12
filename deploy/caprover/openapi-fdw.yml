@@ -1,0 +1,60 @@
+captainVersion: 4
+services:
+  $$cap_appname:
+    image: ghcr.io/sabino/openapi_fdw:control
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://$$cap_pg_user:$$cap_pg_pass@srv-captain--$$cap_appname-db:5432/$$cap_pg_db?sslmode=disable
+      OPENAPI_FDW_ADMIN_TOKEN: $$cap_admin_token
+      OPENAPI_FDW_COOKIE_SECURE: 'true'
+      OPENAPI_FDW_POOL_SIZE: '8'
+    caproverExtra:
+      containerHttpPort: '8080'
+  $$cap_appname-db:
+    image: ghcr.io/sabino/openapi_fdw:pg18
+    restart: always
+    volumes:
+      - $$cap_appname-db-data:/var/lib/postgresql
+    environment:
+      POSTGRES_USER: $$cap_pg_user
+      POSTGRES_PASSWORD: $$cap_pg_pass
+      POSTGRES_DB: $$cap_pg_db
+      POSTGRES_INITDB_ARGS: --data-checksums
+    caproverExtra:
+      notExposeAsWebApp: 'true'
+caproverOneClickApp:
+  variables:
+    - id: $$cap_pg_user
+      label: PostgreSQL user
+      defaultValue: openapi_fdw
+      validRegex: /^[a-z_][a-z0-9_]{0,62}$/
+    - id: $$cap_pg_pass
+      label: PostgreSQL password
+      defaultValue: $$cap_gen_random_hex(32)
+      validRegex: /.{20,}/
+    - id: $$cap_pg_db
+      label: PostgreSQL database
+      defaultValue: openapi_fdw
+      validRegex: /^[a-z_][a-z0-9_]{0,62}$/
+    - id: $$cap_admin_token
+      label: Control-plane administrator token
+      defaultValue: $$cap_gen_random_hex(32)
+      validRegex: /.{16,}/
+  instructions:
+    start: |-
+      Deploy a slim PostgreSQL 18 data plane with OpenAPI FDW and its small,
+      stateless web control plane. PostgreSQL remains private inside the
+      CapRover overlay network by default.
+    end: |-
+      Open https://$$cap_appname.$$cap_root_domain and sign in with the control-plane token.
+
+      Metabase running on this CapRover cluster can connect with:
+      host: srv-captain--$$cap_appname-db
+      port: 5432
+      database: $$cap_pg_db
+      username: $$cap_pg_user
+      password: the PostgreSQL password entered above
+  displayName: OpenAPI FDW
+  isOfficial: false
+  description: Query OpenAPI-described HTTP APIs as live PostgreSQL foreign tables.
+  documentation: https://github.com/sabino/openapi_fdw

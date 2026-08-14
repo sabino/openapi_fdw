@@ -1,4 +1,4 @@
-comment = 'Native JSON and OpenAPI foreign data wrapper'
+comment = 'Native read/write JSON and OpenAPI foreign data wrapper'
 default_version = '@CARGO_VERSION@'
 # Versioned shared-object mode lets PostgreSQL majors install side by side.
 #module_pathname = '$libdir/openapi_fdw'

@@ -123,6 +123,7 @@ function sourceFromForm(tables = []) {
     baseUrl: byId("base-url").value.trim() || null,
     methods,
     includeAttrs: byId("include-attrs").checked,
+    writable: byId("writable").checked,
     tables,
     auth,
     headers: jsonObjectField("headers-json", "Static headers"),
@@ -308,6 +309,13 @@ function renderDiscovery() {
       checkbox,
       make("span", "table-name", table.name),
       make("span", "table-endpoint", table.endpoint),
+      make(
+        "span",
+        "column-count",
+        table.writeOperations.length
+          ? `writes: ${table.writeOperations.join(" / ")}`
+          : "read only",
+      ),
       make("span", "column-count", `${table.columns.length} columns`),
     );
     picker.append(label);

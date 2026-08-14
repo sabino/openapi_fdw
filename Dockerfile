@@ -58,7 +58,7 @@ RUN --mount=type=cache,id=openapi-fdw-pg${PG_MAJOR}-target,target=/build/target,
     && cp -a target/release/openapi_fdw-pg${PG_MAJOR}/usr/. /package/ \
     && extension_dir=$(dirname "$(find /package -type f -name openapi_fdw.control -print -quit)") \
     && test -n "$extension_dir" \
-    && cp sql/openapi_fdw--0.3.1--0.3.2.sql "$extension_dir/"
+    && cp sql/openapi_fdw--*.sql "$extension_dir/"
 
 FROM scratch AS extension-package
 COPY --from=builder /package/ /
@@ -81,4 +81,4 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=12 \
 
 LABEL org.opencontainers.image.source="https://github.com/sabino/openapi_fdw" \
       org.opencontainers.image.description="PostgreSQL ${PG_MAJOR} with the native OpenAPI FDW" \
-      org.opencontainers.image.version="0.3.2"
+      org.opencontainers.image.version="0.4.0"

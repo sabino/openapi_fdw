@@ -160,6 +160,108 @@ def openapi_document(origin: str) -> dict[str, object]:
                     },
                 }
             },
+            "/writable-items": {
+                "get": {
+                    "operationId": "listWritableItems",
+                    "responses": {
+                        "200": {
+                            "description": "Writable objects",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": {
+                                            "$ref": "#/components/schemas/WritableItem"
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                },
+                "post": {
+                    "operationId": "createWritableItem",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WritableItemWrite"
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Created",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": "#/components/schemas/WritableItem"
+                                    }
+                                }
+                            },
+                        }
+                    },
+                },
+            },
+            "/writable-items/{itemId}": {
+                "parameters": [
+                    {
+                        "name": "itemId",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "get": {
+                    "operationId": "getWritableItem",
+                    "responses": {
+                        "200": {
+                            "description": "One object",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "$ref": "#/components/schemas/WritableItem"
+                                    }
+                                }
+                            },
+                        }
+                    },
+                },
+                "patch": {
+                    "operationId": "patchWritableItem",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WritableItemWrite"
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "Updated"}},
+                },
+                "put": {
+                    "operationId": "replaceWritableItem",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WritableItemWrite"
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "Updated"}},
+                },
+                "delete": {
+                    "operationId": "deleteWritableItem",
+                    "responses": {"204": {"description": "Deleted"}},
+                },
+            },
             "/by-slug/{slug}": {
                 "get": {
                     "operationId": "getBySlug",
@@ -245,6 +347,24 @@ def openapi_document(origin: str) -> dict[str, object]:
                             "items": {"$ref": "#/components/schemas/Item"},
                         },
                         "next": {"type": ["string", "null"]},
+                    },
+                },
+                "WritableItem": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "readOnly": True},
+                        "name": {"type": "string"},
+                        "data": {"type": "object", "additionalProperties": True},
+                        "serverOnly": {"type": "string", "readOnly": True},
+                    },
+                },
+                "WritableItemWrite": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "id": {"type": "string", "readOnly": True},
+                        "name": {"type": "string"},
+                        "data": {"type": "object", "additionalProperties": True},
                     },
                 },
             }
@@ -339,6 +459,16 @@ class Handler(BaseHTTPRequestHandler):
             if "name" in query:
                 rows = [row for row in rows if row.get("name") == query["name"][0]]
             self.send_json(rows)
+            return
+        if split.path.startswith("/api/writable-items/"):
+            item_id = unquote(split.path.removeprefix("/api/writable-items/"))
+            rows = [
+                row for row in STATE.writable_snapshot() if row["id"] == item_id
+            ]
+            if rows:
+                self.send_json(rows[0])
+            else:
+                self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
             return
         if split.path.startswith("/api/by-slug/"):
             slug = unquote(split.path.removeprefix("/api/by-slug/"))

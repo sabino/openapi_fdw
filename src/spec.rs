@@ -23,6 +23,19 @@ pub(crate) struct ImportedEndpoint {
     pub(crate) response_path: Option<String>,
     pub(crate) object_path: Option<String>,
     pub(crate) columns: Vec<ImportedColumn>,
+    pub(crate) mutations: Option<ImportedMutations>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ImportedMutations {
+    pub(crate) rowid_column: String,
+    pub(crate) rowid_parameter: String,
+    pub(crate) insert_endpoint: Option<String>,
+    pub(crate) insert_method: Option<String>,
+    pub(crate) update_endpoint: Option<String>,
+    pub(crate) update_method: Option<String>,
+    pub(crate) delete_endpoint: Option<String>,
+    pub(crate) write_columns: Vec<String>,
 }
 
 impl ImportedEndpoint {
@@ -79,6 +92,42 @@ impl ImportedEndpoint {
         }
         if include_attrs && attrs_name != "attrs" {
             options.push(format!("    attrs_column {}", quote_literal(&attrs_name)));
+        }
+        if let Some(mutations) = &self.mutations {
+            options.push(format!(
+                "    rowid_column {}",
+                quote_literal(&mutations.rowid_column)
+            ));
+            if mutations.rowid_parameter != mutations.rowid_column {
+                options.push(format!(
+                    "    rowid_parameter {}",
+                    quote_literal(&mutations.rowid_parameter)
+                ));
+            }
+            if let Some(endpoint) = &mutations.insert_endpoint {
+                options.push(format!("    insert_endpoint {}", quote_literal(endpoint)));
+            }
+            if let Some(method) = &mutations.insert_method {
+                options.push(format!("    insert_method {}", quote_literal(method)));
+            }
+            if let Some(endpoint) = &mutations.update_endpoint {
+                options.push(format!("    update_endpoint {}", quote_literal(endpoint)));
+            }
+            if let Some(method) = &mutations.update_method {
+                options.push(format!("    update_method {}", quote_literal(method)));
+            }
+            if let Some(endpoint) = &mutations.delete_endpoint {
+                options.push(format!("    delete_endpoint {}", quote_literal(endpoint)));
+            }
+            if !mutations.write_columns.is_empty() {
+                options.push(format!(
+                    "    write_columns {}",
+                    quote_literal(
+                        &serde_json::to_string(&mutations.write_columns)
+                            .expect("write column names are serializable")
+                    )
+                ));
+            }
         }
 
         format!(
@@ -153,7 +202,11 @@ pub(crate) fn base_url_from_spec(
     validate_url(absolute.as_str(), "OpenAPI server URL", allow_http)
 }
 
-pub(crate) fn endpoints(spec: &Value, methods: &HashSet<String>) -> Result<Vec<ImportedEndpoint>> {
+pub(crate) fn endpoints(
+    spec: &Value,
+    methods: &HashSet<String>,
+    writable: bool,
+) -> Result<Vec<ImportedEndpoint>> {
     validate_spec(spec)?;
     let paths = spec["paths"].as_object().expect("validated paths object");
     let mut imported = Vec::new();
@@ -191,6 +244,11 @@ pub(crate) fn endpoints(spec: &Value, methods: &HashSet<String>) -> Result<Vec<I
                 &columns,
             );
             columns.extend(parameter_columns);
+            let mutations = if writable && method_upper == "GET" {
+                infer_mutations(spec, path, path_object, paths, &mut columns)
+            } else {
+                None
+            };
             columns.sort_by(
                 |left, right| match (left.name.as_str(), right.name.as_str()) {
                     ("id", "id") => std::cmp::Ordering::Equal,
@@ -215,10 +273,233 @@ pub(crate) fn endpoints(spec: &Value, methods: &HashSet<String>) -> Result<Vec<I
                 response_path,
                 object_path,
                 columns,
+                mutations,
             });
         }
     }
     Ok(imported)
+}
+
+fn infer_mutations(
+    spec: &Value,
+    read_path: &str,
+    read_path_object: &Map<String, Value>,
+    paths: &Map<String, Value>,
+    columns: &mut Vec<ImportedColumn>,
+) -> Option<ImportedMutations> {
+    let read_parameters = template_parameters(read_path)?;
+    if read_parameters.len() > 1 {
+        return None;
+    }
+
+    let item = if read_parameters.len() == 1 {
+        Some((
+            read_path.to_string(),
+            read_parameters[0].clone(),
+            read_path_object.clone(),
+        ))
+    } else {
+        find_item_path(spec, read_path, paths)
+    };
+    let rowid_parameter = item
+        .as_ref()
+        .map(|(_, parameter, _)| parameter.clone())
+        .unwrap_or_else(|| "id".to_string());
+    let rowid_column = columns
+        .iter()
+        .find(|column| {
+            column.json_name == rowid_parameter
+                || column.name == sanitize_identifier(&rowid_parameter)
+        })
+        .or_else(|| {
+            columns
+                .iter()
+                .find(|column| column.json_name == "id" || column.name == "id")
+        })?
+        .name
+        .clone();
+
+    let mut write_columns = BTreeSet::new();
+    let insert = if read_parameters.is_empty() {
+        operation_object(spec, read_path_object, "post").and_then(|operation| {
+            let columns = ensure_request_columns(spec, &operation, columns, &rowid_column);
+            if columns.is_empty() {
+                None
+            } else {
+                write_columns.extend(columns);
+                Some((read_path.to_string(), "POST".to_string()))
+            }
+        })
+    } else {
+        None
+    };
+
+    let update = item.as_ref().and_then(|(path, _, path_object)| {
+        ["patch", "put"].into_iter().find_map(|method| {
+            let operation = operation_object(spec, path_object, method)?;
+            let columns = ensure_request_columns(spec, &operation, columns, &rowid_column);
+            if columns.is_empty() {
+                return None;
+            }
+            write_columns.extend(columns);
+            Some((path.clone(), method.to_ascii_uppercase()))
+        })
+    });
+    let delete_endpoint = item.as_ref().and_then(|(path, _, path_object)| {
+        operation_object(spec, path_object, "delete").map(|_| path.clone())
+    });
+
+    if insert.is_none() && update.is_none() && delete_endpoint.is_none() {
+        return None;
+    }
+    Some(ImportedMutations {
+        rowid_column,
+        rowid_parameter,
+        insert_endpoint: insert.as_ref().map(|(path, _)| path.clone()),
+        insert_method: insert.map(|(_, method)| method),
+        update_endpoint: update.as_ref().map(|(path, _)| path.clone()),
+        update_method: update.map(|(_, method)| method),
+        delete_endpoint,
+        write_columns: write_columns.into_iter().collect(),
+    })
+}
+
+fn find_item_path(
+    spec: &Value,
+    collection_path: &str,
+    paths: &Map<String, Value>,
+) -> Option<(String, String, Map<String, Value>)> {
+    let prefix = if collection_path == "/" {
+        "/".to_string()
+    } else {
+        format!("{}/", collection_path.trim_end_matches('/'))
+    };
+    let mut candidates = paths.keys().collect::<Vec<_>>();
+    candidates.sort();
+    for candidate in candidates {
+        let Some(suffix) = candidate.strip_prefix(&prefix) else {
+            continue;
+        };
+        if suffix.contains('/') {
+            continue;
+        }
+        let parameters = template_parameters(candidate)?;
+        if parameters.len() != 1 || suffix != format!("{{{}}}", parameters[0]) {
+            continue;
+        }
+        let path_item = resolve_ref(spec, paths.get(candidate)?, 0, &mut HashSet::new());
+        let path_object = path_item.as_object()?.clone();
+        return Some((candidate.clone(), parameters[0].clone(), path_object));
+    }
+    None
+}
+
+fn template_parameters(path: &str) -> Option<Vec<String>> {
+    let mut parameters = Vec::new();
+    let mut remaining = path;
+    while let Some(start) = remaining.find('{') {
+        if remaining[..start].contains('}') {
+            return None;
+        }
+        let after_open = &remaining[start + 1..];
+        let end = after_open.find('}')?;
+        let parameter = &after_open[..end];
+        if parameter.is_empty() || parameter.contains('{') {
+            return None;
+        }
+        parameters.push(parameter.to_string());
+        remaining = &after_open[end + 1..];
+    }
+    (!remaining.contains('}')).then_some(parameters)
+}
+
+fn operation_object(
+    spec: &Value,
+    path_object: &Map<String, Value>,
+    method: &str,
+) -> Option<Map<String, Value>> {
+    resolve_ref(spec, path_object.get(method)?, 0, &mut HashSet::new())
+        .as_object()
+        .cloned()
+}
+
+fn ensure_request_columns(
+    spec: &Value,
+    operation: &Map<String, Value>,
+    columns: &mut Vec<ImportedColumn>,
+    rowid_column: &str,
+) -> Vec<String> {
+    let Some(schema) = request_schema(spec, operation) else {
+        return Vec::new();
+    };
+    let schema = resolve_schema(spec, &schema, 0, &mut HashSet::new());
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut properties = properties.iter().collect::<Vec<_>>();
+    properties.sort_by_key(|(name, _)| *name);
+    let mut result = Vec::new();
+    for (json_name, raw_schema) in properties {
+        let schema = resolve_schema(spec, raw_schema, 0, &mut HashSet::new());
+        if schema
+            .get("readOnly")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let column_name =
+            if let Some(existing) = columns.iter().find(|column| column.json_name == *json_name) {
+                existing.name.clone()
+            } else {
+                let name = unique_column_name(sanitize_identifier(json_name), columns);
+                columns.push(ImportedColumn {
+                    name: name.clone(),
+                    json_name: json_name.clone(),
+                    pg_type: postgres_type(&schema),
+                });
+                name
+            };
+        if column_name != rowid_column {
+            result.push(column_name);
+        }
+    }
+    result
+}
+
+fn unique_column_name(base: String, columns: &[ImportedColumn]) -> String {
+    let base = if base.is_empty() {
+        "field".to_string()
+    } else {
+        base
+    };
+    let used = columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<HashSet<_>>();
+    if !used.contains(base.as_str()) {
+        return base;
+    }
+    for ordinal in 2usize.. {
+        let suffix = format!("_{ordinal}");
+        let prefix_length = 63usize.saturating_sub(suffix.len());
+        let candidate = format!("{}{}", &base[..base.len().min(prefix_length)], suffix);
+        if !used.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+    unreachable!("an unused PostgreSQL identifier always exists")
+}
+
+fn request_schema(spec: &Value, operation: &Map<String, Value>) -> Option<Value> {
+    let request_body = resolve_ref(spec, operation.get("requestBody")?, 0, &mut HashSet::new());
+    let content = request_body.get("content")?.as_object()?;
+    let media = content
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("application/json") || name.ends_with("+json"))
+        .or_else(|| content.iter().next())?
+        .1;
+    media.get("schema").cloned()
 }
 
 fn response_schema(spec: &Value, operation: &Map<String, Value>) -> Option<Value> {
@@ -640,7 +921,7 @@ mod tests {
                 }
             }}}
         });
-        let endpoints = endpoints(&spec, &HashSet::from(["GET".to_string()])).unwrap();
+        let endpoints = endpoints(&spec, &HashSet::from(["GET".to_string()]), false).unwrap();
         assert_eq!(endpoints[0].table_name, "list_items");
         assert_eq!(endpoints[0].response_path.as_deref(), Some("/results"));
         assert_eq!(endpoints[0].columns[0].name, "id");
@@ -669,7 +950,7 @@ mod tests {
                 }}}
             }}}}}
         });
-        let endpoints = endpoints(&spec, &HashSet::from(["GET".to_string()])).unwrap();
+        let endpoints = endpoints(&spec, &HashSet::from(["GET".to_string()]), false).unwrap();
         assert_eq!(endpoints[0].response_path.as_deref(), Some("/features"));
         assert_eq!(endpoints[0].object_path.as_deref(), Some("/properties"));
         assert_eq!(endpoints[0].columns[0].name, "name");
@@ -711,6 +992,7 @@ mod tests {
                 json_name: "displayName".to_string(),
                 pg_type: "text",
             }],
+            mutations: None,
         };
         let sql = endpoint.create_sql("target", "server", true);
         assert!(sql.contains("CREATE FOREIGN TABLE \"target\".\"order\""));
@@ -752,9 +1034,127 @@ mod tests {
                     pg_type: "jsonb",
                 },
             ],
+            mutations: None,
         };
         let sql = endpoint.create_sql("target", "server", true);
         assert!(sql.contains("\"_attrs_2\" jsonb"));
         assert!(sql.contains("attrs_column '_attrs_2'"));
+    }
+
+    #[test]
+    fn opt_in_writable_import_pairs_collection_and_item_operations() {
+        let spec = json!({
+            "openapi": "3.1.0",
+            "info": {"title": "Writable", "version": "1"},
+            "paths": {
+                "/objects": {
+                    "get": {
+                        "operationId": "listObjects",
+                        "responses": {"200": {"content": {"application/json": {
+                            "schema": {"type": "array", "items": {"$ref": "#/components/schemas/Object"}}
+                        }}}}
+                    },
+                    "post": {
+                        "requestBody": {"content": {"application/json": {
+                            "schema": {"$ref": "#/components/schemas/ObjectWrite"}
+                        }}},
+                        "responses": {"201": {"content": {"application/json": {
+                            "schema": {"$ref": "#/components/schemas/Object"}
+                        }}}}
+                    }
+                },
+                "/objects/{objectId}": {
+                    "parameters": [{
+                        "name": "objectId", "in": "path", "required": true,
+                        "schema": {"type": "string"}
+                    }],
+                    "get": {
+                        "operationId": "getObject",
+                        "responses": {"200": {"content": {"application/json": {
+                            "schema": {"$ref": "#/components/schemas/Object"}
+                        }}}}
+                    },
+                    "patch": {
+                        "requestBody": {"content": {"application/json": {
+                            "schema": {"$ref": "#/components/schemas/ObjectWrite"}
+                        }}},
+                        "responses": {"200": {"description": "updated"}}
+                    },
+                    "put": {
+                        "requestBody": {"content": {"application/json": {
+                            "schema": {"$ref": "#/components/schemas/ObjectWrite"}
+                        }}},
+                        "responses": {"200": {"description": "updated"}}
+                    },
+                    "delete": {"responses": {"204": {"description": "deleted"}}}
+                }
+            },
+            "components": {"schemas": {
+                "Object": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "readOnly": true},
+                        "name": {"type": "string"},
+                        "data": {"type": "object"},
+                        "createdAt": {"type": "string", "readOnly": true}
+                    }
+                },
+                "ObjectWrite": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "readOnly": true},
+                        "name": {"type": "string"},
+                        "data": {"type": "object"},
+                        "writeToken": {"type": "string", "writeOnly": true}
+                    }
+                }
+            }}
+        });
+        let endpoints = endpoints(&spec, &HashSet::from(["GET".to_string()]), true).unwrap();
+        let collection = endpoints
+            .iter()
+            .find(|endpoint| endpoint.table_name == "list_objects")
+            .unwrap();
+        let mutations = collection.mutations.as_ref().unwrap();
+        assert_eq!(mutations.rowid_column, "id");
+        assert_eq!(mutations.rowid_parameter, "objectId");
+        assert_eq!(mutations.insert_endpoint.as_deref(), Some("/objects"));
+        assert_eq!(
+            mutations.update_endpoint.as_deref(),
+            Some("/objects/{objectId}")
+        );
+        assert_eq!(mutations.update_method.as_deref(), Some("PATCH"));
+        assert_eq!(
+            mutations.delete_endpoint.as_deref(),
+            Some("/objects/{objectId}")
+        );
+        assert_eq!(
+            mutations.write_columns,
+            vec![
+                "data".to_string(),
+                "name".to_string(),
+                "write_token".to_string()
+            ]
+        );
+        assert!(
+            collection
+                .columns
+                .iter()
+                .any(|column| column.name == "write_token")
+        );
+        let sql = collection.create_sql("public_api", "public_api", true);
+        assert!(sql.contains("rowid_column 'id'"));
+        assert!(sql.contains("rowid_parameter 'objectId'"));
+        assert!(sql.contains("insert_endpoint '/objects'"));
+        assert!(sql.contains("update_method 'PATCH'"));
+        assert!(sql.contains("delete_endpoint '/objects/{objectId}'"));
+        assert!(sql.contains("write_columns '[\"data\",\"name\",\"write_token\"]'"));
+
+        let read_only = endpoints(&spec, &HashSet::from(["GET".to_string()]), false).unwrap();
+        assert!(
+            read_only
+                .iter()
+                .all(|endpoint| endpoint.mutations.is_none())
+        );
     }
 }

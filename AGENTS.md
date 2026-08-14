@@ -1,13 +1,14 @@
 # OpenAPI FDW contributor guidance
 
-This repository implements a native, read-only PostgreSQL FDW for JSON HTTP
-APIs. The runtime is Rust with pgrx and Supabase Wrappers. The former
+This repository implements a native PostgreSQL FDW for OpenAPI and JSON HTTP
+APIs. Tables are read-only by default and may opt into explicit remote
+mutations. The runtime is Rust with pgrx and Supabase Wrappers. The former
 Hy/Python/Multicorn implementation is historical and must not be reintroduced
 as an in-database dependency.
 
 ## Important paths
 
-- `src/fdw.rs`: PostgreSQL scan/import callbacks and JSON-to-cell conversion.
+- `src/fdw.rs`: PostgreSQL scan/import/modify callbacks and value conversion.
 - `src/http.rs`: bounded pooled HTTP client, redirects, retries, and spec fetch.
 - `src/spec.rs`: OpenAPI 3.0/3.1 import and safe SQL generation.
 - `src/options.rs`: validated server/table options and credential redaction.
@@ -17,6 +18,7 @@ as an in-database dependency.
 - `tests/mock_api.py`: deterministic real HTTP origin for integration tests.
 - `tests/sql/native_integration.sql`: end-to-end PostgreSQL assertions.
 - `tests/control_plane.sh`: browser-independent control-plane integration flow.
+- `docs/WRITES.md`: mutation opt-in, body, retry, and transaction boundaries.
 - `Dockerfile`: per-PostgreSQL-major build and minimal runtime image.
 - `Dockerfile.control`: stripped static control-plane image.
 

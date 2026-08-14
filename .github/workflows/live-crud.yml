@@ -1,0 +1,80 @@
+name: Live public CRUD validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-crud:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build PostgreSQL 18 image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: PG_MAJOR=18
+          load: true
+          tags: openapi-fdw:live-crud-pg18
+          cache-from: type=gha,scope=pg18
+          cache-to: type=gha,mode=max,scope=pg18
+      - name: Start PostgreSQL
+        run: |
+          docker run --detach \
+            --name openapi-fdw-live-crud \
+            --tmpfs /var/lib/postgresql:rw,size=512m \
+            --env POSTGRES_PASSWORD=postgres \
+            --volume "$GITHUB_WORKSPACE/tests:/tests:ro" \
+            openapi-fdw:live-crud-pg18
+          ready_checks=0
+          for attempt in $(seq 1 60); do
+            if docker exec openapi-fdw-live-crud pg_isready -U postgres; then
+              ready_checks=$((ready_checks + 1))
+              if [ "$ready_checks" -ge 3 ]; then break; fi
+            else
+              ready_checks=0
+            fi
+            sleep 1
+          done
+          test "$ready_checks" -ge 3
+      - name: Prepare one disposable identity
+        run: |
+          marker="openapi-fdw-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'PUBLIC_MARKER=%s\n' "$marker" >> "$GITHUB_ENV"
+          printf 'PUBLIC_EMAIL=%s@example.test\n' "$marker" >> "$GITHUB_ENV"
+      - name: Import the OpenAPI contract and run full CRUD through SQL
+        run: |
+          docker exec openapi-fdw-live-crud \
+            psql -X -v ON_ERROR_STOP=1 \
+              -v marker="$PUBLIC_MARKER" \
+              -v email="$PUBLIC_EMAIL" \
+              -U postgres -d postgres \
+              -f /tests/sql/live_crud.sql
+      - name: Cleanup disposable public user
+        if: always()
+        env:
+          API_ORIGIN: https://gorest.in
+        run: |
+          test -n "${PUBLIC_EMAIL:-}" || exit 0
+          response=$(curl --fail --silent --show-error --get \
+            --data-urlencode "email=$PUBLIC_EMAIL" \
+            "$API_ORIGIN/public/v2/users")
+          printf '%s' "$response" | jq --raw-output '.[].id' | while read -r user_id; do
+            test -n "$user_id" || continue
+            status=$(curl --silent --show-error \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --request DELETE \
+              --header 'Authorization: Bearer openapi-fdw-public-validation' \
+              "$API_ORIGIN/public/v2/users/$user_id")
+            test "$status" = 204 || test "$status" = 404
+          done
+      - name: Diagnostics
+        if: failure()
+        run: docker logs --tail 200 openapi-fdw-live-crud || true
+      - name: Remove test container
+        if: always()
+        run: docker rm --force --volumes openapi-fdw-live-crud || true

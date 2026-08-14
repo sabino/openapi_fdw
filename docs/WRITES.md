@@ -4,6 +4,23 @@ Writes are explicit capabilities on a foreign table. A normal imported or
 manual table has no mutation endpoints and remains read-only. Configuring one
 operation does not implicitly enable the others.
 
+For OpenAPI imports, `writable 'true'` is the explicit opt-in:
+
+```sql
+IMPORT FOREIGN SCHEMA api
+  FROM SERVER vendor
+  INTO app
+  OPTIONS (methods 'GET', include_attrs 'true', writable 'true');
+```
+
+The importer pairs a GET collection with POST on that path and PATCH (preferred)
+or PUT plus DELETE on a directly nested `{identity}` item path. JSON request
+schemas supply the body whitelist and any request-only columns. `readOnly`
+properties are excluded. If the importer cannot determine one stable row
+identity or a structured JSON request body, it leaves that operation disabled.
+Nested paths with multiple independent placeholders currently require a manual
+table contract.
+
 ## Table options
 
 | Option | Meaning |
@@ -85,3 +102,5 @@ Use narrow predicates, explicit body whitelists, API idempotency facilities,
 and single-row statements for business-critical side effects. The deterministic
 PostgreSQL 14-18 suite exercises POST, PATCH, PUT, DELETE, dynamic JSONB bodies,
 204 responses, body whitelisting, and the no-retry rule for POST.
+The manual GoRest.in workflow additionally runs a disposable, fully remote
+INSERT/GET/PATCH/PUT/DELETE lifecycle and cleans up by unique email.

@@ -43,8 +43,8 @@ header automatically. There is no permissive cross-origin policy.
 
 1. Enter a lowercase source/server name and destination PostgreSQL schema.
 2. provide an HTTPS OpenAPI 3.0/3.1 URL or paste JSON/YAML inline.
-3. Optionally override the API base URL, enable read-only POST operations, or
-   configure authentication and request bounds.
+3. Optionally override the API base URL, enable POST scans, opt into declared
+   upstream writes, or configure authentication and request bounds.
 4. Discover operations. Discovery creates a temporary server and schema inside
    a PostgreSQL transaction, reads the resulting catalogs, and rolls the entire
    preview back.
@@ -109,6 +109,7 @@ Export downloads a versioned JSON document:
       "specUrl": "https://example.invalid/openapi.yaml",
       "methods": ["GET"],
       "includeAttrs": true,
+      "writable": false,
       "tables": ["banks", "interest_rates"],
       "auth": { "type": "none" },
       "settings": {
@@ -165,5 +166,9 @@ foreign tables owned by this FDW before generating quoted SQL.
   pages, but it is not a network-level SSRF sandbox.
 - SQL previews and exports are redacted. PostgreSQL superusers and operating
   system administrators can still inspect process configuration and catalogs.
-- The service intentionally has no write API for upstream systems. The FDW is
-  read-only.
+- The service does not proxy or expose a direct HTTP endpoint for upstream
+  mutations. When a source has `writable: true`, it asks the FDW importer to
+  attach only safely paired OpenAPI mutation operations to the generated foreign
+  tables. SQL users can then cause real remote side effects. PostgreSQL rollback
+  cannot undo those HTTP requests; review the generated options and grants
+  before applying them.

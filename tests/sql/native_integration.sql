@@ -29,6 +29,13 @@ IMPORT FOREIGN SCHEMA api
   INTO imported
   OPTIONS (methods 'GET', include_attrs 'true');
 
+CREATE SCHEMA imported_writable;
+IMPORT FOREIGN SCHEMA api
+  LIMIT TO (list_writable_items)
+  FROM SERVER mock_api
+  INTO imported_writable
+  OPTIONS (methods 'GET', include_attrs 'true', writable 'true');
+
 CREATE SERVER environment_auth
   FOREIGN DATA WRAPPER openapi_fdw
   OPTIONS (
@@ -42,6 +49,40 @@ CREATE SERVER environment_auth
 CREATE FOREIGN TABLE environment_auth_items (attrs jsonb)
   SERVER environment_auth OPTIONS (endpoint '/items', pagination 'none');
 SELECT attrs FROM environment_auth_items LIMIT 1;
+
+DO $test$
+DECLARE
+  created_id text;
+  actual_name text;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_foreign_table AS foreign_table,
+           LATERAL pg_options_to_table(foreign_table.ftoptions) AS option
+     WHERE foreign_table.ftrelid = 'imported_writable.list_writable_items'::regclass
+       AND option.option_name = 'update_method'
+       AND option.option_value = 'PATCH'
+  ) THEN
+    RAISE EXCEPTION 'writable OpenAPI import did not infer PATCH';
+  END IF;
+
+  INSERT INTO imported_writable.list_writable_items (name, data)
+  VALUES ('Imported through OpenAPI', '{"source":"import"}'::jsonb);
+  SELECT id INTO STRICT created_id
+    FROM imported_writable.list_writable_items
+   WHERE name = 'Imported through OpenAPI';
+  UPDATE imported_writable.list_writable_items
+     SET name = 'Updated through OpenAPI'
+   WHERE id = created_id;
+  SELECT name INTO STRICT actual_name
+    FROM imported_writable.list_writable_items
+   WHERE id = created_id;
+  IF actual_name <> 'Updated through OpenAPI' THEN
+    RAISE EXCEPTION 'inferred writable table did not update the API: %', actual_name;
+  END IF;
+  DELETE FROM imported_writable.list_writable_items WHERE id = created_id;
+END
+$test$;
 
 DO $test$
 DECLARE

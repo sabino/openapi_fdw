@@ -22,6 +22,8 @@ pub struct SourceDefinition {
     pub methods: Vec<String>,
     #[serde(default = "default_true")]
     pub include_attrs: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub writable: bool,
     #[serde(default)]
     pub tables: Vec<String>,
     #[serde(default)]
@@ -411,6 +413,7 @@ pub struct TableState {
     pub name: String,
     pub endpoint: String,
     pub method: String,
+    pub write_operations: Vec<String>,
     pub columns: Vec<ColumnState>,
 }
 
@@ -587,6 +590,7 @@ mod tests {
             base_url: None,
             methods: vec!["GET".to_string()],
             include_attrs: true,
+            writable: false,
             tables: vec!["banks".to_string()],
             auth: AuthDefinition::None,
             headers: BTreeMap::new(),

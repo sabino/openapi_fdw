@@ -111,7 +111,7 @@ impl ServerConfig {
                 options
                     .get("user_agent")
                     .cloned()
-                    .unwrap_or_else(|| "openapi_fdw/0.3".to_string()),
+                    .unwrap_or_else(|| format!("openapi_fdw/{}", env!("CARGO_PKG_VERSION"))),
             ),
             (
                 "accept".to_string(),
@@ -843,6 +843,16 @@ mod tests {
     fn rejects_plain_http_by_default() {
         let options = HashMap::from([("base_url".to_string(), "http://example.test".to_string())]);
         assert!(ServerConfig::from_options(&options).is_err());
+    }
+
+    #[test]
+    fn default_user_agent_tracks_the_package_version() {
+        let options = HashMap::from([("base_url".to_string(), "https://example.test".to_string())]);
+        let config = ServerConfig::from_options(&options).unwrap();
+        assert_eq!(
+            config.headers.get("user-agent").map(String::as_str),
+            Some(concat!("openapi_fdw/", env!("CARGO_PKG_VERSION")))
+        );
     }
 
     #[test]

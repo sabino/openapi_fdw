@@ -162,6 +162,139 @@ BEGIN
 END
 $test$;
 
+CREATE FOREIGN TABLE writable_items (
+  id text,
+  name text,
+  data jsonb,
+  server_only text,
+  attrs jsonb
+)
+SERVER mock_api
+OPTIONS (
+  endpoint '/writable-items',
+  pagination 'none',
+  column_map '{"server_only":"serverOnly"}',
+  rowid_column 'id',
+  rowid_parameter 'itemId',
+  insert_endpoint '/writable-items',
+  update_endpoint '/writable-items/{itemId}',
+  delete_endpoint '/writable-items/{itemId}',
+  write_columns '["name","data"]'
+);
+
+DO $test$
+DECLARE
+  created_id text;
+  actual_name text;
+  actual_data jsonb;
+BEGIN
+  INSERT INTO writable_items (name, data)
+  VALUES ('Created through SQL', '{"stage":"insert"}'::jsonb);
+
+  SELECT id INTO STRICT created_id
+    FROM writable_items
+   WHERE name = 'Created through SQL';
+  IF created_id !~ '^generated-[0-9]+$' THEN
+    RAISE EXCEPTION 'POST did not create a remotely generated identity: %', created_id;
+  END IF;
+
+  UPDATE writable_items
+     SET name = 'Patched through SQL', data = '{"stage":"patch"}'::jsonb
+   WHERE id = created_id;
+  SELECT name, data INTO STRICT actual_name, actual_data
+    FROM writable_items
+   WHERE id = created_id;
+  IF actual_name <> 'Patched through SQL'
+     OR actual_data <> '{"stage":"patch"}'::jsonb THEN
+    RAISE EXCEPTION 'PATCH did not persist through SQL: %, %', actual_name, actual_data;
+  END IF;
+END
+$test$;
+
+ALTER FOREIGN TABLE writable_items OPTIONS (SET update_method 'PUT');
+
+DO $test$
+DECLARE
+  created_id text;
+  actual_data jsonb;
+BEGIN
+  SELECT id INTO STRICT created_id
+    FROM writable_items
+   WHERE name = 'Patched through SQL';
+  UPDATE writable_items
+     SET data = '{"stage":"put"}'::jsonb
+   WHERE id = created_id;
+  SELECT data INTO STRICT actual_data
+    FROM writable_items
+   WHERE id = created_id;
+  IF actual_data <> '{"stage":"put"}'::jsonb THEN
+    RAISE EXCEPTION 'PUT did not persist through SQL: %', actual_data;
+  END IF;
+
+  DELETE FROM writable_items WHERE id = created_id;
+  IF EXISTS (SELECT 1 FROM writable_items WHERE id = created_id) THEN
+    RAISE EXCEPTION 'DELETE did not remove the remote row';
+  END IF;
+END
+$test$;
+
+CREATE FOREIGN TABLE writable_attrs (
+  id text,
+  name text,
+  data jsonb,
+  attrs jsonb
+)
+SERVER mock_api
+OPTIONS (
+  endpoint '/writable-items',
+  pagination 'none',
+  rowid_column 'id',
+  rowid_parameter 'itemId',
+  insert_endpoint '/writable-items',
+  delete_endpoint '/writable-items/{itemId}',
+  write_mode 'attrs'
+);
+
+DO $test$
+DECLARE
+  created_id text;
+  actual_data jsonb;
+BEGIN
+  INSERT INTO writable_attrs (attrs)
+  VALUES ('{"name":"JSONB through SQL","data":{"dynamic":true},"newApiField":42}'::jsonb);
+  SELECT id, data INTO STRICT created_id, actual_data
+    FROM writable_attrs
+   WHERE name = 'JSONB through SQL';
+  IF actual_data <> '{"dynamic":true}'::jsonb THEN
+    RAISE EXCEPTION 'JSONB write body was not preserved: %', actual_data;
+  END IF;
+  DELETE FROM writable_attrs WHERE id = created_id;
+END
+$test$;
+
+CREATE FOREIGN TABLE non_retrying_write (
+  id text,
+  name text
+)
+SERVER mock_api
+OPTIONS (
+  endpoint '/writable-items',
+  pagination 'none',
+  rowid_column 'id',
+  insert_endpoint '/flaky-write',
+  write_columns '["name"]'
+);
+DO $test$
+BEGIN
+  BEGIN
+    INSERT INTO non_retrying_write (name) VALUES ('must run once');
+    RAISE EXCEPTION 'failing POST mutation unexpectedly succeeded';
+  EXCEPTION
+    WHEN SQLSTATE 'HV00L' THEN NULL;
+  END;
+END
+$test$;
+
 CREATE FOREIGN TABLE flaky (id bigint)
   SERVER mock_api OPTIONS (endpoint '/flaky');
 DO $test$
@@ -306,6 +439,55 @@ BEGIN
        AND attrs #>> '{body,term}' = 'postgres'
   ) THEN
     RAISE EXCEPTION 'POST request body was not transmitted';
+  END IF;
+  IF (SELECT count(*) FROM request_log
+       WHERE attrs ->> 'path' = '/api/flaky-write'
+         AND attrs ->> 'method' = 'POST') <> 1 THEN
+    RAISE EXCEPTION 'non-idempotent POST mutation was retried';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM request_log
+     WHERE attrs ->> 'method' = 'POST'
+       AND attrs ->> 'path' = '/api/writable-items'
+       AND attrs #>> '{body,name}' = 'Created through SQL'
+       AND attrs #> '{body,data}' = '{"stage":"insert"}'::jsonb
+       AND NOT (attrs -> 'body' ? 'id')
+       AND NOT (attrs -> 'body' ? 'serverOnly')
+  ) THEN
+    RAISE EXCEPTION 'INSERT body whitelist was not respected';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM request_log
+     WHERE attrs ->> 'method' = 'PATCH'
+       AND attrs ->> 'path' LIKE '/api/writable-items/generated-%'
+       AND attrs #>> '{body,name}' = 'Patched through SQL'
+       AND attrs #> '{body,data}' = '{"stage":"patch"}'::jsonb
+  ) THEN
+    RAISE EXCEPTION 'UPDATE was not mapped to PATCH with the expected body';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM request_log
+     WHERE attrs ->> 'method' = 'PUT'
+       AND attrs ->> 'path' LIKE '/api/writable-items/generated-%'
+       AND attrs #> '{body,data}' = '{"stage":"put"}'::jsonb
+  ) THEN
+    RAISE EXCEPTION 'UPDATE was not mapped to PUT';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM request_log
+     WHERE attrs ->> 'method' = 'DELETE'
+       AND attrs ->> 'path' LIKE '/api/writable-items/generated-%'
+  ) THEN
+    RAISE EXCEPTION 'DELETE was not sent to the row identity endpoint';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM request_log
+     WHERE attrs ->> 'method' = 'POST'
+       AND attrs ->> 'path' = '/api/writable-items'
+       AND attrs #>> '{body,name}' = 'JSONB through SQL'
+       AND attrs #>> '{body,newApiField}' = '42'
+  ) THEN
+    RAISE EXCEPTION 'JSONB write mode did not forward dynamic API fields';
   END IF;
 END
 $test$;

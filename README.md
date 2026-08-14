@@ -4,22 +4,25 @@
 
 Turn an OpenAPI-described HTTP API into live PostgreSQL tables.
 
-`openapi_fdw` is a native, read-only PostgreSQL foreign data wrapper written in
-Rust. It discovers operations from OpenAPI 3.0/3.1, creates typed foreign
-tables, and makes a real HTTP request whenever PostgreSQL scans one of those
-tables. Every imported table can also retain the complete source object in an
-`attrs jsonb` column, so new API fields are immediately queryable without DDL.
+`openapi_fdw` is a native PostgreSQL foreign data wrapper written in Rust. It
+discovers operations from OpenAPI 3.0/3.1, creates typed foreign tables, and
+makes a real HTTP request whenever PostgreSQL scans one of those tables. Tables
+are read-only by default and can opt into explicit POST/PUT/PATCH/DELETE
+endpoints. Every table can also retain the complete source object in an `attrs
+jsonb` column, so new API fields are immediately queryable without DDL.
 
 The project ships two deliberately separate pieces:
 
-- the **data plane**, a native PostgreSQL extension built with `pgrx` and
-  Supabase Wrappers; and
+- the **data plane**, a native PostgreSQL extension built with `pgrx` and the
+  `supabase-wrappers` Rust callback adapter; and
 - the **control plane**, a small stateless Rust web service that discovers
   tables, previews the exact SQL, applies configuration transactionally,
   previews live rows, and imports or exports redacted setup bundles.
 
-There is no Python interpreter, Hy runtime, Multicorn process, Node server, or
-hidden data-copy service in production.
+There is no Supabase service dependency and no Wasm data path. The adapter is
+linked into the same native extension and supplies PostgreSQL FDW callback
+boilerplate. There is also no Python interpreter, Hy runtime, Multicorn process,
+Node server, or hidden data-copy service in production.
 
 ## Run the complete stack
 
@@ -109,6 +112,52 @@ FROM vendor.items;
 
 For an intentionally untyped endpoint, declare only `attrs jsonb`; no OpenAPI
 document is required.
+
+## Opt-in writes to HTTP APIs
+
+Writable tables declare each allowed operation. Omitting an endpoint keeps that
+SQL operation disabled:
+
+```sql
+CREATE FOREIGN TABLE app.items (
+  id text,
+  name text,
+  data jsonb,
+  attrs jsonb
+)
+SERVER vendor
+OPTIONS (
+  endpoint '/objects',
+  rowid_column 'id',
+  rowid_parameter 'objectId',
+  insert_endpoint '/objects',
+  insert_method 'POST',
+  update_endpoint '/objects/{objectId}',
+  update_method 'PATCH',
+  delete_endpoint '/objects/{objectId}',
+  write_columns '["name","data"]'
+);
+
+INSERT INTO app.items (name, data)
+VALUES ('From PostgreSQL', '{"status":"new"}');
+
+UPDATE app.items SET data = '{"status":"ready"}' WHERE id = 'object-id';
+DELETE FROM app.items WHERE id = 'object-id';
+```
+
+`write_columns` is an optional body whitelist; without it, all typed columns
+except the row identity and `attrs` are sent. `write_mode 'attrs'` sends one
+JSONB object as the complete request body. `write_mode 'merge'` starts with that
+JSONB object and overlays the selected typed columns. `column_map` applies in
+both directions, including object-only JSON Pointer paths.
+
+HTTP side effects cannot participate in a PostgreSQL transaction: a later SQL
+rollback cannot undo an accepted remote request, and a multi-row statement can
+partially succeed. Mutations execute one request per row. POST and PATCH are
+never retried automatically because their effects may not be idempotent. The
+current callback adapter also does not support `RETURNING`. Use a remote API
+with stable row identities and design write workflows around these boundaries.
+See [writable table behavior](docs/WRITES.md) for the full contract.
 
 ## Authentication and portable setup bundles
 
@@ -243,8 +292,9 @@ incompatible server. More detail is in [installation and deployment](docs/DEPLOY
   columns safely.
 - OpenAPI 3.0/3.1 JSON or YAML, local component `$ref`, compositions, arrays,
   common envelopes, and GeoJSON are supported.
-- GET and explicitly configured read-only POST scans are supported. The FDW
-  never implements `INSERT`, `UPDATE`, or `DELETE` against an API.
+- GET and explicitly configured POST scans are supported. Explicit mutation
+  endpoints map SQL INSERT/UPDATE/DELETE to POST or PUT, PATCH or PUT, and
+  DELETE respectively; tables remain read-only by default.
 - HTTPS certificate verification is on by default. Plain HTTP requires an
   explicit opt-in.
 - Connections are pooled per PostgreSQL backend. Timeouts, decompressed body
@@ -278,6 +328,7 @@ reached 1,940 scans/s. Public network latency normally dominates; see
 - [Control plane and bundle format](docs/CONTROL_PLANE.md)
 - [Installation and containers](docs/DEPLOYMENT.md)
 - [Architecture and trade-offs](docs/ARCHITECTURE.md)
+- [Writable table behavior](docs/WRITES.md)
 - [Original prototype audit](docs/AUDIT.md)
 - [Public API research](docs/API_RESEARCH.md)
 - [Benchmarks](docs/BENCHMARKS.md)

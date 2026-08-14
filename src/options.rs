@@ -287,6 +287,19 @@ pub(crate) enum TypeErrorMode {
     Null,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WriteMode {
+    Columns,
+    Attrs,
+    Merge,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MutationOperation {
+    pub(crate) endpoint: String,
+    pub(crate) method: String,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct TableConfig {
     pub(crate) endpoint: String,
@@ -306,6 +319,13 @@ pub(crate) struct TableConfig {
     pub(crate) pagination: PaginationMode,
     pub(crate) max_pages: Option<usize>,
     pub(crate) type_error: TypeErrorMode,
+    pub(crate) rowid_column: Option<String>,
+    pub(crate) rowid_parameter: Option<String>,
+    pub(crate) insert: Option<MutationOperation>,
+    pub(crate) update: Option<MutationOperation>,
+    pub(crate) delete: Option<MutationOperation>,
+    pub(crate) write_mode: WriteMode,
+    pub(crate) write_columns: Option<BTreeSet<String>>,
 }
 
 impl TableConfig {
@@ -367,6 +387,104 @@ impl TableConfig {
             }
         };
 
+        let rowid_column = non_empty_option(options, "rowid_column", None);
+        let rowid_parameter =
+            non_empty_option(options, "rowid_parameter", None).or_else(|| rowid_column.clone());
+        if options.contains_key("rowid_parameter") && rowid_column.is_none() {
+            return Err(OpenApiFdwError::Configuration(
+                "option `rowid_parameter` requires `rowid_column`".to_string(),
+            ));
+        }
+        if let Some(parameter) = &rowid_parameter
+            && (parameter
+                .chars()
+                .any(|character| matches!(character, '{' | '}' | '/' | '?' | '#'))
+                || parameter.trim().is_empty())
+        {
+            return Err(OpenApiFdwError::Configuration(
+                "option `rowid_parameter` must be a non-empty path parameter name".to_string(),
+            ));
+        }
+
+        let insert = parse_mutation_operation(
+            options,
+            "insert_endpoint",
+            "insert_method",
+            "POST",
+            &["POST", "PUT"],
+            rowid_parameter.as_deref(),
+            false,
+        )?;
+        let update = parse_mutation_operation(
+            options,
+            "update_endpoint",
+            "update_method",
+            "PATCH",
+            &["PATCH", "PUT"],
+            rowid_parameter.as_deref(),
+            true,
+        )?;
+        let delete = parse_mutation_operation(
+            options,
+            "delete_endpoint",
+            "delete_method",
+            "DELETE",
+            &["DELETE"],
+            rowid_parameter.as_deref(),
+            true,
+        )?;
+        let has_mutations = insert.is_some() || update.is_some() || delete.is_some();
+        if has_mutations && rowid_column.is_none() {
+            return Err(OpenApiFdwError::Configuration(
+                "writable foreign tables require option `rowid_column`".to_string(),
+            ));
+        }
+
+        let write_mode = match options.get("write_mode").map(String::as_str) {
+            None | Some("columns") => WriteMode::Columns,
+            Some("attrs") => WriteMode::Attrs,
+            Some("merge") => WriteMode::Merge,
+            Some(other) => {
+                return Err(OpenApiFdwError::Configuration(format!(
+                    "unsupported write_mode `{other}`; use `columns`, `attrs`, or `merge`"
+                )));
+            }
+        };
+        let write_columns = options
+            .get("write_columns")
+            .map(|raw| parse_string_set(raw, "write_columns"))
+            .transpose()?;
+        if !has_mutations && (options.contains_key("write_mode") || write_columns.is_some()) {
+            return Err(OpenApiFdwError::Configuration(
+                "write options require at least one mutation endpoint".to_string(),
+            ));
+        }
+        if write_mode == WriteMode::Attrs && write_columns.is_some() {
+            return Err(OpenApiFdwError::Configuration(
+                "write_columns cannot be used with write_mode `attrs`".to_string(),
+            ));
+        }
+        if let Some(columns) = &write_columns {
+            if rowid_column
+                .as_ref()
+                .is_some_and(|rowid| columns.contains(rowid))
+            {
+                return Err(OpenApiFdwError::Configuration(
+                    "write_columns must not contain the rowid_column".to_string(),
+                ));
+            }
+            let attrs_column = options
+                .get("attrs_column")
+                .map(String::as_str)
+                .unwrap_or("attrs");
+            if columns.contains(attrs_column) {
+                return Err(OpenApiFdwError::Configuration(
+                    "write_columns must not contain the attrs_column; use write_mode `attrs` or `merge`"
+                        .to_string(),
+                ));
+            }
+        }
+
         Ok(Self {
             endpoint,
             method,
@@ -402,8 +520,104 @@ impl TableConfig {
             max_pages: parse_optional_bounded(options, "max_pages", 1, 10_000)?
                 .map(|value| value as usize),
             type_error,
+            rowid_column,
+            rowid_parameter,
+            insert,
+            update,
+            delete,
+            write_mode,
+            write_columns,
         })
     }
+}
+
+fn parse_mutation_operation(
+    options: &HashMap<String, String>,
+    endpoint_name: &str,
+    method_name: &str,
+    default_method: &str,
+    allowed_methods: &[&str],
+    rowid_parameter: Option<&str>,
+    requires_rowid: bool,
+) -> Result<Option<MutationOperation>> {
+    let endpoint = non_empty_option(options, endpoint_name, None);
+    if endpoint.is_none() && options.contains_key(method_name) {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "option `{method_name}` requires `{endpoint_name}`"
+        )));
+    }
+    let Some(endpoint) = endpoint else {
+        return Ok(None);
+    };
+    if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "`{endpoint_name}` must be relative to the server `base_url`"
+        )));
+    }
+
+    let method = options
+        .get(method_name)
+        .map(|value| value.to_ascii_uppercase())
+        .unwrap_or_else(|| default_method.to_string());
+    if !allowed_methods.contains(&method.as_str()) {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "unsupported {method_name} `{method}`; use {}",
+            allowed_methods.join(" or ")
+        )));
+    }
+
+    let placeholders = path_placeholders(&endpoint, endpoint_name)?;
+    if !placeholders.is_empty() {
+        let expected = rowid_parameter.ok_or_else(|| {
+            OpenApiFdwError::Configuration(format!(
+                "`{endpoint_name}` has a path parameter but `rowid_column` is not configured"
+            ))
+        })?;
+        if placeholders.iter().any(|parameter| parameter != expected) {
+            return Err(OpenApiFdwError::Configuration(format!(
+                "`{endpoint_name}` may contain only the row identity placeholder `{{{expected}}}`"
+            )));
+        }
+    }
+    if requires_rowid {
+        let expected = rowid_parameter.ok_or_else(|| {
+            OpenApiFdwError::Configuration(format!("`{endpoint_name}` requires `rowid_column`"))
+        })?;
+        if !placeholders.iter().any(|parameter| parameter == expected) {
+            return Err(OpenApiFdwError::Configuration(format!(
+                "`{endpoint_name}` must contain row identity placeholder `{{{expected}}}`"
+            )));
+        }
+    }
+
+    Ok(Some(MutationOperation { endpoint, method }))
+}
+
+fn path_placeholders(endpoint: &str, name: &str) -> Result<Vec<String>> {
+    let mut placeholders = Vec::new();
+    let mut remaining = endpoint;
+    while let Some(start) = remaining.find('{') {
+        let after_open = &remaining[start + 1..];
+        let end = after_open.find('}').ok_or_else(|| {
+            OpenApiFdwError::Configuration(format!("`{name}` has an unmatched `{{`"))
+        })?;
+        let parameter = &after_open[..end];
+        if parameter.is_empty() || parameter.contains('{') {
+            return Err(OpenApiFdwError::Configuration(format!(
+                "`{name}` has an invalid path parameter"
+            )));
+        }
+        placeholders.push(parameter.to_string());
+        remaining = &after_open[end + 1..];
+    }
+    if remaining.contains('}')
+        || endpoint[..endpoint.find('{').unwrap_or(endpoint.len())].contains('}')
+    {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "`{name}` has an unmatched `}}`"
+        )));
+    }
+    Ok(placeholders)
 }
 
 pub(crate) fn validate_url(raw: &str, label: &str, allow_http: bool) -> Result<Url> {
@@ -521,6 +735,32 @@ fn parse_string_map(raw: &str, name: &str) -> Result<BTreeMap<String, String>> {
         .collect()
 }
 
+fn parse_string_set(raw: &str, name: &str) -> Result<BTreeSet<String>> {
+    let values = parse_json(raw, name)?;
+    let values = values.as_array().ok_or_else(|| {
+        OpenApiFdwError::Configuration(format!("option `{name}` must be a JSON array"))
+    })?;
+    if values.is_empty() {
+        return Err(OpenApiFdwError::Configuration(format!(
+            "option `{name}` must not be empty"
+        )));
+    }
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    OpenApiFdwError::Configuration(format!(
+                        "option `{name}` values must be non-empty strings"
+                    ))
+                })
+        })
+        .collect()
+}
+
 fn validate_custom_header(normalized: &str, original: &str) -> Result<()> {
     if matches!(
         normalized,
@@ -613,6 +853,45 @@ mod tests {
         assert_eq!(config.attrs_column, "attrs");
         assert_eq!(config.limit_param.as_deref(), Some("limit"));
         assert_eq!(config.pagination, PaginationMode::Auto);
+        assert!(config.insert.is_none());
+        assert!(config.update.is_none());
+        assert!(config.delete.is_none());
+    }
+
+    #[test]
+    fn parses_explicit_writable_table_contract() {
+        let options = HashMap::from([
+            ("endpoint".to_string(), "/items".to_string()),
+            ("rowid_column".to_string(), "id".to_string()),
+            ("rowid_parameter".to_string(), "itemId".to_string()),
+            ("insert_endpoint".to_string(), "/items".to_string()),
+            ("update_endpoint".to_string(), "/items/{itemId}".to_string()),
+            ("update_method".to_string(), "PUT".to_string()),
+            ("delete_endpoint".to_string(), "/items/{itemId}".to_string()),
+            (
+                "write_columns".to_string(),
+                r#"["name","data"]"#.to_string(),
+            ),
+        ]);
+        let config = TableConfig::from_options(&options).unwrap();
+        assert_eq!(config.insert.unwrap().method, "POST");
+        assert_eq!(config.update.unwrap().method, "PUT");
+        assert_eq!(config.delete.unwrap().method, "DELETE");
+        assert_eq!(config.rowid_parameter.as_deref(), Some("itemId"));
+        assert_eq!(
+            config.write_columns.unwrap(),
+            BTreeSet::from(["data".to_string(), "name".to_string()])
+        );
+    }
+
+    #[test]
+    fn writable_identity_endpoints_must_bind_the_rowid() {
+        let options = HashMap::from([
+            ("endpoint".to_string(), "/items".to_string()),
+            ("rowid_column".to_string(), "id".to_string()),
+            ("update_endpoint".to_string(), "/items".to_string()),
+        ]);
+        assert!(TableConfig::from_options(&options).is_err());
     }
 
     #[test]

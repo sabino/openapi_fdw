@@ -118,6 +118,10 @@ pub(crate) fn execute_json(server: &ServerConfig, request: &HttpRequest) -> Resu
     })
 }
 
+pub(crate) fn execute_mutation(server: &ServerConfig, request: &HttpRequest) -> Result<()> {
+    execute(server, request).map(|_| ())
+}
+
 pub(crate) fn fetch_spec(server: &ServerConfig) -> Result<Value> {
     if let Some(raw) = &server.spec_json {
         return parse_spec_document(raw.as_bytes());
@@ -164,8 +168,17 @@ fn execute(server: &ServerConfig, request: &HttpRequest) -> Result<RawResponse> 
     })?;
     let headers = request_headers(server, request.body.is_some())?;
 
+    // Retrying POST or PATCH after losing the response can apply the same
+    // mutation twice. Only methods whose HTTP semantics are idempotent receive
+    // automatic transport/status retries. An API-specific idempotency key can
+    // still be supplied as a configured header, but we never assume one.
+    let maximum_retries = if automatically_retryable(&method) {
+        server.max_retries
+    } else {
+        0
+    };
     let mut last_error = None;
-    for attempt in 0..=server.max_retries {
+    for attempt in 0..=maximum_retries {
         let mut url = request.url.clone();
         {
             let mut query = url.query_pairs_mut();
@@ -192,7 +205,7 @@ fn execute(server: &ServerConfig, request: &HttpRequest) -> Result<RawResponse> 
             Ok(response) => {
                 let status = response.status();
                 let retry_delay = retry_delay(&response, attempt, server.max_retry_delay);
-                if is_retryable_status(status) && attempt < server.max_retries {
+                if is_retryable_status(status) && attempt < maximum_retries {
                     drop(response);
                     thread::sleep(retry_delay);
                     continue;
@@ -209,7 +222,7 @@ fn execute(server: &ServerConfig, request: &HttpRequest) -> Result<RawResponse> 
             Err(error) => {
                 let retryable = error.is_timeout() || error.is_connect() || error.is_request();
                 last_error = Some(server.redact(&error.to_string()));
-                if retryable && attempt < server.max_retries {
+                if retryable && attempt < maximum_retries {
                     thread::sleep(exponential_delay(attempt, server.max_retry_delay));
                     continue;
                 }
@@ -221,6 +234,15 @@ fn execute(server: &ServerConfig, request: &HttpRequest) -> Result<RawResponse> 
     Err(OpenApiFdwError::Http(last_error.unwrap_or_else(|| {
         "request failed without an error message".to_string()
     })))
+}
+
+fn automatically_retryable(method: &Method) -> bool {
+    method == Method::GET
+        || method == Method::HEAD
+        || method == Method::PUT
+        || method == Method::DELETE
+        || method == Method::OPTIONS
+        || method == Method::TRACE
 }
 
 fn pooled_client(server: &ServerConfig) -> Result<Client> {
@@ -463,5 +485,14 @@ mod tests {
         assert!(is_json_content_type("application/json; charset=utf-8"));
         assert!(is_json_content_type("application/geo+json"));
         assert!(!is_json_content_type("text/html"));
+    }
+
+    #[test]
+    fn retries_only_idempotent_methods_automatically() {
+        assert!(automatically_retryable(&Method::GET));
+        assert!(automatically_retryable(&Method::PUT));
+        assert!(automatically_retryable(&Method::DELETE));
+        assert!(!automatically_retryable(&Method::POST));
+        assert!(!automatically_retryable(&Method::PATCH));
     }
 }

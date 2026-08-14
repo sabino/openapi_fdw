@@ -1,6 +1,8 @@
 use crate::error::{OpenApiFdwError, Result};
-use crate::http::{HttpRequest, endpoint_url, execute_json, fetch_spec, resolve_page_url};
-use crate::options::{ServerConfig, TableConfig, TypeErrorMode};
+use crate::http::{
+    HttpRequest, endpoint_url, execute_json, execute_mutation, fetch_spec, resolve_page_url,
+};
+use crate::options::{ServerConfig, TableConfig, TypeErrorMode, WriteMode};
 use crate::response::{PageToken, normalize_page};
 use crate::spec;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
@@ -10,6 +12,7 @@ use pgrx::prelude::{Date, Time, Timestamp, TimestampWithTimeZone};
 use pgrx::{AnyNumeric, JsonB};
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use supabase_wrappers::prelude::*;
 use uuid::Uuid;
 
@@ -211,6 +214,78 @@ impl ForeignDataWrapper<OpenApiFdwError> for OpenApiFdw {
         Ok(())
     }
 
+    fn begin_modify(&mut self, options: &HashMap<String, String>) -> Result<()> {
+        let table = TableConfig::from_options(options)?;
+        if table.insert.is_none() && table.update.is_none() && table.delete.is_none() {
+            return Err(OpenApiFdwError::Configuration(
+                "foreign table is read-only; configure an explicit mutation endpoint".to_string(),
+            ));
+        }
+        self.base_url = Some(self.resolve_base_url()?);
+        self.table = Some(table);
+        Ok(())
+    }
+
+    fn insert(&mut self, row: &Row) -> Result<()> {
+        let table = self.modify_table()?;
+        let operation = table.insert.as_ref().ok_or_else(|| {
+            OpenApiFdwError::Configuration(
+                "INSERT is disabled; configure table option `insert_endpoint`".to_string(),
+            )
+        })?;
+        let endpoint = if operation.endpoint.contains('{') {
+            let rowid_column = table
+                .rowid_column
+                .as_deref()
+                .expect("validated rowid column");
+            let rowid = row_cell(row, rowid_column).ok_or_else(|| {
+                OpenApiFdwError::Configuration(format!(
+                    "INSERT endpoint requires a non-NULL `{rowid_column}` value"
+                ))
+            })?;
+            mutation_endpoint(&operation.endpoint, table, rowid)?
+        } else {
+            operation.endpoint.clone()
+        };
+        let request =
+            self.mutation_request(&endpoint, &operation.method, Some(write_body(row, table)?))?;
+        execute_mutation(&self.server, &request)
+    }
+
+    fn update(&mut self, rowid: &Cell, new_row: &Row) -> Result<()> {
+        let table = self.modify_table()?;
+        let operation = table.update.as_ref().ok_or_else(|| {
+            OpenApiFdwError::Configuration(
+                "UPDATE is disabled; configure table option `update_endpoint`".to_string(),
+            )
+        })?;
+        let endpoint = mutation_endpoint(&operation.endpoint, table, rowid)?;
+        let request = self.mutation_request(
+            &endpoint,
+            &operation.method,
+            Some(write_body(new_row, table)?),
+        )?;
+        execute_mutation(&self.server, &request)
+    }
+
+    fn delete(&mut self, rowid: &Cell) -> Result<()> {
+        let table = self.modify_table()?;
+        let operation = table.delete.as_ref().ok_or_else(|| {
+            OpenApiFdwError::Configuration(
+                "DELETE is disabled; configure table option `delete_endpoint`".to_string(),
+            )
+        })?;
+        let endpoint = mutation_endpoint(&operation.endpoint, table, rowid)?;
+        let request = self.mutation_request(&endpoint, &operation.method, None)?;
+        execute_mutation(&self.server, &request)
+    }
+
+    fn end_modify(&mut self) -> Result<()> {
+        self.table = None;
+        self.base_url = None;
+        Ok(())
+    }
+
     fn import_foreign_schema(&mut self, stmt: ImportForeignSchemaStmt) -> Result<Vec<String>> {
         if let Some(name) = stmt
             .options
@@ -278,6 +353,33 @@ impl ForeignDataWrapper<OpenApiFdwError> for OpenApiFdw {
 }
 
 impl OpenApiFdw {
+    fn modify_table(&self) -> Result<&TableConfig> {
+        self.table.as_ref().ok_or_else(|| {
+            OpenApiFdwError::Configuration(
+                "foreign table modification was not initialized".to_string(),
+            )
+        })
+    }
+
+    fn mutation_request(
+        &self,
+        endpoint: &str,
+        method: &str,
+        body: Option<JsonValue>,
+    ) -> Result<HttpRequest> {
+        let base_url = self.base_url.as_ref().ok_or_else(|| {
+            OpenApiFdwError::Configuration(
+                "foreign table modification has no resolved base URL".to_string(),
+            )
+        })?;
+        Ok(HttpRequest {
+            method: method.to_string(),
+            url: endpoint_url(base_url, endpoint)?,
+            query: Vec::new(),
+            body,
+        })
+    }
+
     fn resolve_base_url(&self) -> Result<url::Url> {
         if let Some(url) = &self.server.base_url {
             return Ok(url.clone());
@@ -404,6 +506,279 @@ impl OpenApiFdw {
             }
         })
     }
+}
+
+fn row_cell<'a>(row: &'a Row, column: &str) -> Option<&'a Cell> {
+    row.iter()
+        .find(|(name, _)| name.as_str() == column)
+        .and_then(|(_, cell)| cell.as_ref())
+}
+
+fn mutation_endpoint(template: &str, table: &TableConfig, rowid: &Cell) -> Result<String> {
+    let parameter = table
+        .rowid_parameter
+        .as_deref()
+        .expect("mutation endpoint has validated rowid parameter");
+    let raw = cell_path_value(rowid)?;
+    let encoded = utf8_percent_encode(&raw, NON_ALPHANUMERIC).to_string();
+    Ok(template.replace(&format!("{{{parameter}}}"), &encoded))
+}
+
+fn write_body(row: &Row, table: &TableConfig) -> Result<JsonValue> {
+    let mut body = match table.write_mode {
+        WriteMode::Columns => serde_json::Map::new(),
+        WriteMode::Attrs | WriteMode::Merge => {
+            let attrs = row_cell(row, &table.attrs_column);
+            match attrs {
+                Some(Cell::Json(JsonB(JsonValue::Object(object)))) => object.clone(),
+                Some(Cell::Json(_)) => {
+                    return Err(OpenApiFdwError::Configuration(format!(
+                        "write_mode `{}` requires `{}` to contain a JSON object",
+                        write_mode_name(table.write_mode),
+                        table.attrs_column
+                    )));
+                }
+                Some(_) => {
+                    return Err(OpenApiFdwError::Configuration(format!(
+                        "attrs_column `{}` must use PostgreSQL type jsonb",
+                        table.attrs_column
+                    )));
+                }
+                None if table.write_mode == WriteMode::Attrs => {
+                    return Err(OpenApiFdwError::Configuration(format!(
+                        "write_mode `attrs` requires a non-NULL `{}` JSONB value",
+                        table.attrs_column
+                    )));
+                }
+                None => serde_json::Map::new(),
+            }
+        }
+    };
+
+    if table.write_mode != WriteMode::Attrs {
+        for (column, cell) in row.iter() {
+            if table.rowid_column.as_deref() == Some(column.as_str())
+                || column == &table.attrs_column
+            {
+                continue;
+            }
+            if let Some(columns) = &table.write_columns
+                && !columns.contains(column)
+            {
+                continue;
+            }
+            let value = match cell {
+                Some(cell) => cell_to_json(cell)?,
+                None => JsonValue::Null,
+            };
+            let target = table
+                .column_map
+                .get(column)
+                .map(String::as_str)
+                .unwrap_or(column);
+            insert_write_value(&mut body, target, value)?;
+        }
+    }
+
+    if body.is_empty() {
+        return Err(OpenApiFdwError::Configuration(
+            "mutation request body is empty after applying write_columns".to_string(),
+        ));
+    }
+
+    Ok(JsonValue::Object(body))
+}
+
+fn write_mode_name(mode: WriteMode) -> &'static str {
+    match mode {
+        WriteMode::Columns => "columns",
+        WriteMode::Attrs => "attrs",
+        WriteMode::Merge => "merge",
+    }
+}
+
+fn insert_write_value(
+    body: &mut serde_json::Map<String, JsonValue>,
+    target: &str,
+    value: JsonValue,
+) -> Result<()> {
+    if !target.starts_with('/') {
+        body.insert(target.to_string(), value);
+        return Ok(());
+    }
+    let tokens = target
+        .split('/')
+        .skip(1)
+        .map(decode_pointer_token)
+        .collect::<Result<Vec<_>>>()?;
+    if tokens.is_empty() {
+        return Err(OpenApiFdwError::Configuration(
+            "column_map JSON Pointer cannot target the document root during writes".to_string(),
+        ));
+    }
+    insert_pointer_tokens(body, &tokens, value, target)
+}
+
+fn insert_pointer_tokens(
+    object: &mut serde_json::Map<String, JsonValue>,
+    tokens: &[String],
+    value: JsonValue,
+    pointer: &str,
+) -> Result<()> {
+    let (head, tail) = tokens.split_first().expect("non-empty pointer tokens");
+    if tail.is_empty() {
+        object.insert(head.clone(), value);
+        return Ok(());
+    }
+    let nested = object
+        .entry(head.clone())
+        .or_insert_with(|| JsonValue::Object(serde_json::Map::new()));
+    let nested = nested.as_object_mut().ok_or_else(|| {
+        OpenApiFdwError::Configuration(format!(
+            "column_map pointer `{pointer}` conflicts with a non-object JSON value"
+        ))
+    })?;
+    insert_pointer_tokens(nested, tail, value, pointer)
+}
+
+fn decode_pointer_token(raw: &str) -> Result<String> {
+    let mut decoded = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(character) = chars.next() {
+        if character != '~' {
+            decoded.push(character);
+            continue;
+        }
+        match chars.next() {
+            Some('0') => decoded.push('~'),
+            Some('1') => decoded.push('/'),
+            _ => {
+                return Err(OpenApiFdwError::Configuration(
+                    "column_map contains an invalid RFC 6901 escape".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(decoded)
+}
+
+fn cell_path_value(cell: &Cell) -> Result<String> {
+    match cell_to_json(cell)? {
+        JsonValue::Bool(value) => Ok(value.to_string()),
+        JsonValue::Number(value) => Ok(value.to_string()),
+        JsonValue::String(value) => Ok(value),
+        JsonValue::Null | JsonValue::Array(_) | JsonValue::Object(_) => {
+            Err(OpenApiFdwError::Configuration(
+                "rowid_column must use a scalar PostgreSQL type".to_string(),
+            ))
+        }
+    }
+}
+
+fn cell_to_json(cell: &Cell) -> Result<JsonValue> {
+    let number = |value: f64| {
+        serde_json::Number::from_f64(value)
+            .map(JsonValue::Number)
+            .ok_or_else(|| {
+                OpenApiFdwError::Configuration(
+                    "NaN and infinite floating-point values cannot be sent as JSON".to_string(),
+                )
+            })
+    };
+    let string_array = |values: &[Option<String>]| {
+        JsonValue::Array(
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .clone()
+                        .map(JsonValue::String)
+                        .unwrap_or(JsonValue::Null)
+                })
+                .collect(),
+        )
+    };
+    match cell {
+        Cell::Bool(value) => Ok(JsonValue::Bool(*value)),
+        Cell::I8(value) => Ok(JsonValue::from(*value)),
+        Cell::I16(value) => Ok(JsonValue::from(*value)),
+        Cell::I32(value) => Ok(JsonValue::from(*value)),
+        Cell::I64(value) => Ok(JsonValue::from(*value)),
+        Cell::F32(value) => number(*value as f64),
+        Cell::F64(value) => number(*value),
+        Cell::Numeric(value) => serde_json::from_str(&value.to_string()).map_err(|_| {
+            OpenApiFdwError::Configuration(
+                "numeric value cannot be represented as a JSON number".to_string(),
+            )
+        }),
+        Cell::String(value) => Ok(JsonValue::String(value.clone())),
+        Cell::Date(value) => Ok(JsonValue::String(pg_display_value(value))),
+        Cell::Time(value) => Ok(JsonValue::String(pg_display_value(value))),
+        Cell::Timestamp(value) => Ok(JsonValue::String(pg_display_value(value))),
+        Cell::Timestamptz(value) => Ok(JsonValue::String(pg_display_value(value))),
+        Cell::Interval(value) => Ok(JsonValue::String(value.to_string())),
+        Cell::Json(JsonB(value)) => Ok(value.clone()),
+        Cell::Bytea(value) => {
+            let bytes = unsafe { pgrx::varlena::varlena_to_byte_slice(*value) };
+            let mut encoded = String::with_capacity(2 + bytes.len() * 2);
+            encoded.push_str("\\x");
+            for byte in bytes {
+                write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+            }
+            Ok(JsonValue::String(encoded))
+        }
+        Cell::Uuid(value) => Ok(JsonValue::String(value.to_string())),
+        Cell::BoolArray(values) => Ok(JsonValue::Array(
+            values
+                .iter()
+                .map(|value| value.map(JsonValue::Bool).unwrap_or(JsonValue::Null))
+                .collect(),
+        )),
+        Cell::I16Array(values) => Ok(integer_array(values)),
+        Cell::I32Array(values) => Ok(integer_array(values)),
+        Cell::I64Array(values) => Ok(integer_array(values)),
+        Cell::F32Array(values) => values
+            .iter()
+            .map(|value| value.map(|value| number(value as f64)).transpose())
+            .collect::<Result<Vec<_>>>()
+            .map(|values| {
+                JsonValue::Array(
+                    values
+                        .into_iter()
+                        .map(|value| value.unwrap_or(JsonValue::Null))
+                        .collect(),
+                )
+            }),
+        Cell::F64Array(values) => values
+            .iter()
+            .map(|value| value.map(number).transpose())
+            .collect::<Result<Vec<_>>>()
+            .map(|values| {
+                JsonValue::Array(
+                    values
+                        .into_iter()
+                        .map(|value| value.unwrap_or(JsonValue::Null))
+                        .collect(),
+                )
+            }),
+        Cell::StringArray(values) => Ok(string_array(values)),
+    }
+}
+
+fn integer_array<T>(values: &[Option<T>]) -> JsonValue
+where
+    T: Copy + Into<JsonValue>,
+{
+    JsonValue::Array(
+        values
+            .iter()
+            .map(|value| value.map(Into::into).unwrap_or(JsonValue::Null))
+            .collect(),
+    )
+}
+
+fn pg_display_value(value: &impl std::fmt::Display) -> String {
+    value.to_string().trim_matches('\'').to_string()
 }
 
 fn substitute_path_parameters(
@@ -744,6 +1119,16 @@ const TABLE_OPTIONS: &[&str] = &[
     "max_pages",
     "on_type_error",
     "startup_cost",
+    "rowid_column",
+    "rowid_parameter",
+    "insert_endpoint",
+    "insert_method",
+    "update_endpoint",
+    "update_method",
+    "delete_endpoint",
+    "delete_method",
+    "write_mode",
+    "write_columns",
 ];
 
 #[cfg(test)]
@@ -795,6 +1180,100 @@ mod tests {
                 ("tag".to_string(), "one".to_string()),
                 ("tag".to_string(), "two".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn column_write_mode_applies_whitelist_and_json_names() {
+        let table = TableConfig::from_options(&HashMap::from([
+            ("endpoint".to_string(), "/items".to_string()),
+            ("rowid_column".to_string(), "id".to_string()),
+            ("insert_endpoint".to_string(), "/items".to_string()),
+            (
+                "write_columns".to_string(),
+                r#"["display_name","data"]"#.to_string(),
+            ),
+            (
+                "column_map".to_string(),
+                r#"{"display_name":"displayName"}"#.to_string(),
+            ),
+        ]))
+        .unwrap();
+        let mut row = Row::new();
+        row.push("id", Some(Cell::String("ignored-id".to_string())));
+        row.push("display_name", Some(Cell::String("Example".to_string())));
+        row.push(
+            "data",
+            Some(Cell::Json(JsonB(serde_json::json!({"dynamic": true})))),
+        );
+        row.push("server_only", Some(Cell::String("ignored".to_string())));
+        row.push(
+            "attrs",
+            Some(Cell::Json(JsonB(serde_json::json!({"raw": "ignored"})))),
+        );
+
+        assert_eq!(
+            write_body(&row, &table).unwrap(),
+            serde_json::json!({
+                "displayName": "Example",
+                "data": {"dynamic": true}
+            })
+        );
+
+        let mut partial_update = Row::new();
+        partial_update.push(
+            "data",
+            Some(Cell::Json(JsonB(serde_json::json!({"only": "changed"})))),
+        );
+        assert_eq!(
+            write_body(&partial_update, &table).unwrap(),
+            serde_json::json!({"data": {"only": "changed"}})
+        );
+
+        let mut filtered_update = Row::new();
+        filtered_update.push("server_only", Some(Cell::String("ignored".to_string())));
+        assert!(write_body(&filtered_update, &table).is_err());
+    }
+
+    #[test]
+    fn attrs_write_mode_forwards_a_dynamic_json_object() {
+        let table = TableConfig::from_options(&HashMap::from([
+            ("endpoint".to_string(), "/items".to_string()),
+            ("rowid_column".to_string(), "id".to_string()),
+            ("insert_endpoint".to_string(), "/items".to_string()),
+            ("write_mode".to_string(), "attrs".to_string()),
+        ]))
+        .unwrap();
+        let mut row = Row::new();
+        row.push(
+            "attrs",
+            Some(Cell::Json(JsonB(serde_json::json!({
+                "unknownFutureField": 42
+            })))),
+        );
+        assert_eq!(
+            write_body(&row, &table).unwrap(),
+            serde_json::json!({"unknownFutureField": 42})
+        );
+    }
+
+    #[test]
+    fn mutation_identity_is_url_encoded() {
+        let table = TableConfig::from_options(&HashMap::from([
+            ("endpoint".to_string(), "/items".to_string()),
+            ("rowid_column".to_string(), "id".to_string()),
+            ("rowid_parameter".to_string(), "itemId".to_string()),
+            ("delete_endpoint".to_string(), "/items/{itemId}".to_string()),
+        ]))
+        .unwrap();
+        assert_eq!(
+            mutation_endpoint(
+                &table.delete.as_ref().unwrap().endpoint,
+                &table,
+                &Cell::String("a/b c".to_string())
+            )
+            .unwrap(),
+            "/items/a%2Fb%20c"
         );
     }
 }

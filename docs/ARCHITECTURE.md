@@ -2,7 +2,7 @@
 
 Status: accepted for the overhaul
 
-Decision date: 2026-08-12
+Decision date: 2026-08-12; writable extension accepted 2026-08-14
 
 ## Outcome
 
@@ -12,7 +12,7 @@ built on the maintained
 FDW framework and
 [`pgrx`](https://github.com/pgcentralfoundation/pgrx).
 
-The extension will remain read-only initially. It will expose both:
+The extension is read-only by default and exposes both:
 
 - typed columns, declared manually or generated as a point-in-time snapshot by
   `IMPORT FOREIGN SCHEMA`; and
@@ -21,6 +21,14 @@ The extension will remain read-only initially. It will expose both:
 
 The Hy implementation remains available in Git history as an educational
 prototype, but it will not be installed in a PostgreSQL backend.
+
+The `supabase-wrappers` dependency is a native Rust framework crate, not a call
+to a hosted Supabase product. Its macros and traits connect this extension to
+PostgreSQL's planner, scan, import, and modify callbacks. The resulting data
+plane is one native shared library. Supabase's separate OpenAPI Wasm wrapper was
+used as research input, but it is neither embedded nor executed here. Removing
+the adapter would mean maintaining the same unsafe PostgreSQL callback
+boilerplate directly and would not remove HTTP or JSON work from the hot path.
 
 ## Why the relational schema cannot be fully dynamic
 
@@ -72,7 +80,7 @@ supabase-wrappers native FDW callbacks
         |
         +--> OpenAPI importer --> safe CREATE FOREIGN TABLE statements
         |
-        +--> request planner --> path/query/LIMIT pushdown
+        +--> request planner --> path/query/LIMIT pushdown and opt-in mutations
         |                          |
         |                          v
         +--------------------> pooled Rust HTTP client
@@ -112,6 +120,8 @@ stopped after configuration; it is never on the scan path.
   and `anyOf` handled conservatively.
 - Server URL selection and server-variable defaults.
 - GET plus explicit POST-for-read endpoints.
+- Explicit POST/PUT/PATCH/DELETE mutation endpoints; absent endpoints remain
+  disabled.
 - Static headers, API keys, bearer tokens, environment-resolved credentials,
   and credential redaction.
 - Connection pooling, TLS verification, connect/request timeouts, decompression,
@@ -148,6 +158,9 @@ stopped after configuration; it is never on the scan path.
   unless `spec_with_auth` is explicitly enabled.
 - Dynamic DDL generated from OpenAPI uses identifier/literal quoting rather
   than string interpolation.
+- HTTP mutations are not transaction participants. PostgreSQL rollback cannot
+  compensate an accepted remote side effect, and multi-row writes can partially
+  succeed. Non-idempotent POST/PATCH requests are never retried automatically.
 
 ## Validation matrix
 

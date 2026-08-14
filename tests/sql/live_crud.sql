@@ -27,9 +27,11 @@ IMPORT FOREIGN SCHEMA api
   INTO live_crud
   OPTIONS (methods 'GET', include_attrs 'true', writable 'true');
 
+SELECT set_config('openapi_fdw.live_object_id', :'object_id', false);
+
 DO $test$
 DECLARE
-  expected_id text := :'object_id';
+  expected_id text := current_setting('openapi_fdw.live_object_id');
   actual_name text;
   actual_data jsonb;
 BEGIN

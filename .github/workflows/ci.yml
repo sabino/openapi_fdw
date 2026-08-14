@@ -34,7 +34,9 @@ jobs:
           ruby -ryaml -e 'ARGV.each { |path| YAML.load_file(path) }' \
             compose.yaml \
             deploy/caprover/openapi-fdw.yml \
-            examples/brasilapi.openapi.yaml
+            examples/brasilapi.openapi.yaml \
+            examples/restful-api.openapi.yaml \
+            .github/workflows/live-crud.yml
           docker compose config --quiet
 
   postgres:

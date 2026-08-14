@@ -176,6 +176,7 @@ Live opt-in smoke tests use several independent public APIs:
 | [PokéAPI](https://github.com/PokeAPI/pokeapi/blob/master/openapi.yml) | OpenAPI 3.1, no auth, `results` envelope, offset/URL pagination, list and path-parameter detail endpoints |
 | [National Weather Service](https://www.weather.gov/documentation/services-web-api) | Official live OpenAPI document, required User-Agent, GeoJSON, nested properties, cursor-like pagination |
 | [BrasilAPI](https://github.com/BrasilAPI/BrasilAPI) | Real Portuguese/Brazilian data; its rendered docs have no stable raw spec URL, so this repository supplies a small reviewable contract with the correct `/api` base path |
+| [RESTful API.dev](https://restful-api.dev/) | Public no-auth CRUD objects; manual disposable-object validation for OpenAPI-inferred PATCH/GET/DELETE plus deterministic local INSERT coverage |
 | GitHub REST | Optional authenticated test for API keys, rate limits, and RFC 8288 Link pagination |
 
 Live services are never the only CI oracle; their availability and contracts

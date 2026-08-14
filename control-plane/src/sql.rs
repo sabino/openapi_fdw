@@ -231,8 +231,13 @@ fn import_sql(source: &SourceDefinition, server_name: &str, schema_name: &str) -
                 .join(", ")
         )
     };
+    let writable = if source.writable {
+        ", writable E'true'"
+    } else {
+        ""
+    };
     format!(
-        "IMPORT FOREIGN SCHEMA {}{}\n  FROM SERVER {}\n  INTO {}\n  OPTIONS (methods {}, include_attrs {})",
+        "IMPORT FOREIGN SCHEMA {}{}\n  FROM SERVER {}\n  INTO {}\n  OPTIONS (methods {}, include_attrs {}{})",
         quote_identifier(&source.remote_schema),
         selection,
         quote_identifier(server_name),
@@ -243,7 +248,8 @@ fn import_sql(source: &SourceDefinition, server_name: &str, schema_name: &str) -
         } else {
             "false"
         })
-        .expect("boolean cannot contain NUL")
+        .expect("boolean cannot contain NUL"),
+        writable
     )
 }
 
@@ -277,6 +283,7 @@ mod tests {
             base_url: None,
             methods: vec!["GET".to_string()],
             include_attrs: true,
+            writable: false,
             tables: vec!["items".to_string()],
             auth: AuthDefinition::Bearer {
                 secret: SecretValue {
@@ -304,5 +311,13 @@ mod tests {
         assert_eq!(quote_identifier("odd\"name"), "\"odd\"\"name\"");
         assert_eq!(quote_literal("a'b\\c").unwrap(), "E'a''b\\\\c'");
         assert!(quote_literal("bad\0value").is_err());
+    }
+
+    #[test]
+    fn writable_sources_emit_an_explicit_import_opt_in() {
+        let mut source = source();
+        source.writable = true;
+        let plan = source_plan(&source, "vendor", "vendor", false, true).unwrap();
+        assert!(plan.import_schema.contains("writable E'true'"));
     }
 }

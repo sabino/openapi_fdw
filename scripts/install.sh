@@ -7,7 +7,7 @@ pg_config=${PG_CONFIG:-pg_config}
 
 usage() {
   printf '%s\n' \
-    'Usage: install.sh [--version v0.3.2] [--pg-config /path/to/pg_config]' \
+    'Usage: install.sh [--version v0.4.0] [--pg-config /path/to/pg_config]' \
     '' \
     'Installs a checksummed glibc/Linux x86-64 OpenAPI FDW release for the' \
     'PostgreSQL major reported by pg_config.'

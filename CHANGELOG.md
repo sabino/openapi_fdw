@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 - 2026-08-14
+
+- Add explicit native SQL INSERT/UPDATE/DELETE mapping to POST/PUT/PATCH/DELETE
+  endpoints, with typed body whitelists and schema-flexible JSONB modes.
+- Infer safe collection/item CRUD pairs and request-body columns when
+  `IMPORT FOREIGN SCHEMA` opts into `writable 'true'`.
+- Never retry non-idempotent POST/PATCH mutations automatically and document
+  the HTTP transaction, multi-row, and `RETURNING` boundaries.
+- Add control-plane writable discovery, portable bundle support, deterministic
+  PostgreSQL 14-18 CRUD coverage, a public CRUD adapter contract, and a manual
+  disposable-object live validation workflow.
+- Ship the `0.3.2` to `0.4.0` extension upgrade script in images and native
+  packages.
+
 ## 0.3.2 - 2026-08-12
 
 - Treat path-template tables without all required equality predicates as empty

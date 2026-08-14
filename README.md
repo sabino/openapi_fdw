@@ -79,8 +79,9 @@ The normal control-plane flow is:
 1. Enter an HTTPS URL to an OpenAPI 3.0 or 3.1 JSON/YAML document, or paste the
    document inline.
 2. Optionally override its API base URL and configure authentication.
-3. Discover the GET operations, plus explicitly enabled read-only POST
-   operations.
+3. Discover the GET operations, plus explicitly enabled POST scans. Optionally
+   ask the importer to pair compatible POST/PATCH/PUT/DELETE operations as
+   writable table capabilities.
 4. Select tables and inspect the redacted `CREATE SERVER` and
    `IMPORT FOREIGN SCHEMA` statements.
 5. Apply the transaction, then preview live rows before connecting another
@@ -159,6 +160,30 @@ never retried automatically because their effects may not be idempotent. The
 current callback adapter also does not support `RETURNING`. Use a remote API
 with stable row identities and design write workflows around these boundaries.
 See [writable table behavior](docs/WRITES.md) for the full contract.
+
+For a compatible OpenAPI document, the declarative path is one extra flag:
+
+```sql
+IMPORT FOREIGN SCHEMA api
+  FROM SERVER vendor
+  INTO app
+  OPTIONS (methods 'GET', include_attrs 'true', writable 'true');
+```
+
+For each GET collection, the importer looks for POST on the collection and
+PATCH (preferred) or PUT plus DELETE on a one-identity item path. It derives the
+row identity and body whitelist from path parameters and JSON request schemas.
+Operations that cannot be paired safely stay read-only.
+
+The repository includes a directly importable contract for the public
+[RESTful API.dev object service](examples/restful-api.openapi.yaml). Its
+documented anonymous API supports POST, GET, PUT, PATCH, and DELETE with a small
+daily request allowance. The manual
+[`Live public CRUD validation`](.github/workflows/live-crud.yml) creates one
+disposable object, imports `get_object`, performs PATCH/GET/DELETE through
+PostgreSQL, and always attempts cleanup. Local PostgreSQL 14-18 tests cover SQL
+INSERT as well because the public service's generated ID cannot currently be
+obtained through `RETURNING`.
 
 ## Authentication and portable setup bundles
 
@@ -251,7 +276,7 @@ docker run --name openapi-postgres \
 ```
 
 Tags `pg14` through `pg18` track the latest release for each PostgreSQL major.
-Versioned tags use `v0.3.2-pg18`. The control plane is a separate stripped
+Versioned tags use `v0.4.0-pg18`. The control plane is a separate stripped
 scratch image:
 
 ```text
@@ -264,7 +289,7 @@ On glibc Linux x86-64 with PostgreSQL development/runtime files installed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sabino/openapi_fdw/main/scripts/install.sh \
-  | sudo sh -s -- --version v0.3.2 --pg-config /usr/lib/postgresql/18/bin/pg_config
+  | sudo sh -s -- --version v0.4.0 --pg-config /usr/lib/postgresql/18/bin/pg_config
 ```
 
 The installer detects the PostgreSQL major, downloads its release archive,

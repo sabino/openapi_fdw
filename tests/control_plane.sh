@@ -34,6 +34,7 @@ source_definition=$(jq --null-input \
     specUrl: $spec,
     methods: ["GET"],
     includeAttrs: true,
+    writable: true,
     tables: [],
     auth: {type: "none"},
     settings: {allowHttp: true}
@@ -60,15 +61,21 @@ test "$protected_delete" = "422"
 
 discovery=$(api POST /api/v1/discover "$source_definition")
 printf '%s' "$discovery" \
-  | jq --exit-status '.tables | map(.name) | index("list_items") != null' >/dev/null
+  | jq --exit-status '
+      (.tables | map(.name) | index("list_items") != null)
+      and (.tables | map(.name) | index("list_writable_items") != null)
+      and ((.tables[] | select(.name == "list_writable_items") | .writeOperations)
+           == ["INSERT", "UPDATE", "DELETE"])' >/dev/null
 
 selected=$(printf '%s' "$source_definition" \
-  | jq '.tables = ["list_items"]')
+  | jq '.tables = ["list_items", "list_writable_items"]')
 request=$(jq --null-input --argjson source "$selected" '{source: $source, replace: false}')
 
 plan=$(api POST /api/v1/sources/plan "$request")
 printf '%s' "$plan" \
-  | jq --exit-status '.sql | contains("IMPORT FOREIGN SCHEMA")' >/dev/null
+  | jq --exit-status '
+      (.sql | contains("IMPORT FOREIGN SCHEMA"))
+      and (.sql | contains("writable E'"'"'true'"'"'"))' >/dev/null
 
 api POST /api/v1/sources "$request" \
   | jq --exit-status '.ok and (.sql | contains("list_items"))' >/dev/null
@@ -77,13 +84,17 @@ api GET /api/v1/state \
   | jq --exit-status '
       .sources[0].name == "integration_api"
       and .sources[0].managed
-      and (.sources[0].tables | map(.name) | index("list_items") != null)' >/dev/null
+      and (.sources[0].tables | map(.name) | index("list_items") != null)
+      and (.sources[0].tables | map(.name) | index("list_writable_items") != null)' >/dev/null
 
 api GET '/api/v1/sources/integration_api/tables/integration_control/list_items/rows?limit=2' \
   | jq --exit-status '.rows | length == 2 and .[0].attrs.futureField != null' >/dev/null
 
 api GET /api/v1/export \
-  | jq --exit-status '.apiVersion == "openapi-fdw/v1" and .sources[0].name == "integration_api"' >/dev/null
+  | jq --exit-status '
+      .apiVersion == "openapi-fdw/v1"
+      and .sources[0].name == "integration_api"
+      and .sources[0].writable' >/dev/null
 
 api DELETE /api/v1/sources/integration_api '{"confirm":"integration_api"}' \
   | jq --exit-status '.ok' >/dev/null

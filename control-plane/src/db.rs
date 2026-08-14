@@ -408,7 +408,15 @@ where
                     COALESCE((SELECT option_value FROM pg_options_to_table(ft.ftoptions)
                                WHERE option_name = 'endpoint'), ''),
                     COALESCE((SELECT option_value FROM pg_options_to_table(ft.ftoptions)
-                               WHERE option_name = 'method'), 'GET')
+                               WHERE option_name = 'method'), 'GET'),
+                    array_remove(ARRAY[
+                      CASE WHEN EXISTS (SELECT 1 FROM pg_options_to_table(ft.ftoptions)
+                                         WHERE option_name = 'insert_endpoint') THEN 'INSERT' END,
+                      CASE WHEN EXISTS (SELECT 1 FROM pg_options_to_table(ft.ftoptions)
+                                         WHERE option_name = 'update_endpoint') THEN 'UPDATE' END,
+                      CASE WHEN EXISTS (SELECT 1 FROM pg_options_to_table(ft.ftoptions)
+                                         WHERE option_name = 'delete_endpoint') THEN 'DELETE' END
+                    ]::text[], NULL)
                FROM pg_foreign_table ft
                JOIN pg_foreign_server s ON s.oid = ft.ftserver
                JOIN pg_class c ON c.oid = ft.ftrelid
@@ -462,6 +470,7 @@ where
                 name,
                 endpoint: row.get(2),
                 method: row.get(3),
+                write_operations: row.get(4),
             }
         })
         .collect())

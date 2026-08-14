@@ -9,22 +9,24 @@ mkdir -p "$temporary/export/usr/lib/postgresql/18/lib"
 mkdir -p "$temporary/export/usr/share/postgresql/18/extension"
 mkdir -p "$temporary/output" "$temporary/unpacked"
 
-printf 'library\n' >"$temporary/export/usr/lib/postgresql/18/lib/openapi_fdw-0.3.2.so"
+printf 'library\n' >"$temporary/export/usr/lib/postgresql/18/lib/openapi_fdw-0.4.0.so"
 printf 'control\n' >"$temporary/export/usr/share/postgresql/18/extension/openapi_fdw.control"
-printf 'sql\n' >"$temporary/export/usr/share/postgresql/18/extension/openapi_fdw--0.3.2.sql"
-printf 'upgrade\n' >"$temporary/export/usr/share/postgresql/18/extension/openapi_fdw--0.3.1--0.3.2.sql"
+printf 'sql\n' >"$temporary/export/usr/share/postgresql/18/extension/openapi_fdw--0.4.0.sql"
+printf 'old-upgrade\n' >"$temporary/export/usr/share/postgresql/18/extension/openapi_fdw--0.3.1--0.3.2.sql"
+printf 'upgrade\n' >"$temporary/export/usr/share/postgresql/18/extension/openapi_fdw--0.3.2--0.4.0.sql"
 
 "$repository_root/scripts/package-native.sh" \
-  "$temporary/export" v0.3.2 18 "$temporary/output" >/dev/null
+  "$temporary/export" v0.4.0 18 "$temporary/output" >/dev/null
 
-archive="$temporary/output/openapi_fdw-v0.3.2-pg18-linux-amd64.tar.gz"
+archive="$temporary/output/openapi_fdw-v0.4.0-pg18-linux-amd64.tar.gz"
 (cd "$temporary/output" && sha256sum --check "${archive##*/}.sha256" >/dev/null)
 tar -C "$temporary/unpacked" -xzf "$archive"
 
-test -f "$temporary/unpacked/openapi_fdw-0.3.2.so"
+test -f "$temporary/unpacked/openapi_fdw-0.4.0.so"
 test -f "$temporary/unpacked/openapi_fdw.control"
-test -f "$temporary/unpacked/openapi_fdw--0.3.2.sql"
+test -f "$temporary/unpacked/openapi_fdw--0.4.0.sql"
 test -f "$temporary/unpacked/openapi_fdw--0.3.1--0.3.2.sql"
+test -f "$temporary/unpacked/openapi_fdw--0.3.2--0.4.0.sql"
 test ! -e "$temporary/unpacked/openapi_fdw.so"
 
 printf '%s\n' 'native package contract passed'

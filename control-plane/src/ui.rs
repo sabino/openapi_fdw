@@ -120,6 +120,8 @@ pub fn dashboard() -> String {
                                 label class="check" { input id="method-get" type="checkbox" checked; span { "GET" } }
                                 label class="check" { input id="method-post" type="checkbox"; span { "Read-only POST" } }
                                 label class="check" { input id="include-attrs" type="checkbox" checked; span { "Include full attrs JSONB" } }
+                                label class="check" { input id="writable" type="checkbox"; span { "Enable declared API writes" } }
+                                small { "Opt in only for a trusted contract. Imported POST/PATCH/PUT/DELETE operations cause real remote side effects." }
                             }
                             div class="field" {
                                 label for="auth-type" { "Authentication" }

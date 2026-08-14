@@ -17,7 +17,7 @@ use supabase_wrappers::prelude::*;
 use uuid::Uuid;
 
 #[wrappers_fdw(
-    version = "0.3.2",
+    version = "0.4.0",
     author = "Sabino",
     website = "https://github.com/sabino/openapi_fdw",
     error_type = "OpenApiFdwError"
@@ -290,7 +290,7 @@ impl ForeignDataWrapper<OpenApiFdwError> for OpenApiFdw {
         if let Some(name) = stmt
             .options
             .keys()
-            .find(|name| !matches!(name.as_str(), "methods" | "include_attrs"))
+            .find(|name| !matches!(name.as_str(), "methods" | "include_attrs" | "writable"))
         {
             return Err(OpenApiFdwError::Spec(format!(
                 "unknown IMPORT option `{name}`"
@@ -317,7 +317,8 @@ impl ForeignDataWrapper<OpenApiFdwError> for OpenApiFdw {
             ));
         }
         let include_attrs = import_bool(&stmt.options, "include_attrs", true)?;
-        let endpoints = spec::endpoints(&document, &methods)?;
+        let writable = import_bool(&stmt.options, "writable", false)?;
+        let endpoints = spec::endpoints(&document, &methods, writable)?;
         let filtered = endpoints
             .into_iter()
             .filter(|endpoint| match stmt.list_type {

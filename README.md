@@ -176,14 +176,13 @@ row identity and body whitelist from path parameters and JSON request schemas.
 Operations that cannot be paired safely stay read-only.
 
 The repository includes a directly importable contract for the public
-[RESTful API.dev object service](examples/restful-api.openapi.yaml). Its
-documented anonymous API supports POST, GET, PUT, PATCH, and DELETE with a small
-daily request allowance. The manual
+[GoRest.in QA user service](examples/gorest.openapi.yaml). Its documented API
+supports filtered GET plus authenticated POST, PUT, PATCH, and DELETE; any
+non-empty demo bearer token is accepted. The manual
 [`Live public CRUD validation`](.github/workflows/live-crud.yml) creates one
-disposable object, imports `get_object`, performs PATCH/GET/DELETE through
-PostgreSQL, and always attempts cleanup. Local PostgreSQL 14-18 tests cover SQL
-INSERT as well because the public service's generated ID cannot currently be
-obtained through `RETURNING`.
+uniquely identified disposable user with SQL INSERT, recovers its generated ID
+through a filtered SELECT, then performs PATCH, full PUT, GET, and DELETE through
+PostgreSQL. A final API-side cleanup runs even if the SQL flow fails.
 
 ## Authentication and portable setup bundles
 

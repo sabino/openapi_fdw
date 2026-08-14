@@ -1,0 +1,167 @@
+openapi: 3.1.0
+info:
+  title: GoRest.in public QA users
+  version: 1.0.0
+  description: >-
+    A compact OpenAPI contract for the public QA CRUD API documented at
+    https://www.gorest.in/. The service is intended for disposable tests and
+    accepts any non-empty bearer token for write requests.
+servers:
+  - url: https://gorest.in
+paths:
+  /public/v2/users:
+    get:
+      operationId: listUsers
+      summary: List and filter users
+      parameters:
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: email
+          in: query
+          schema:
+            type: string
+        - name: gender
+          in: query
+          schema:
+            type: string
+            enum: [male, female]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive]
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      summary: Create a disposable user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserWrite"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+  /public/v2/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: getUser
+      summary: Fetch one user
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: Not found
+    put:
+      operationId: replaceUser
+      summary: Replace a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserWrite"
+      responses:
+        "200":
+          description: Replaced user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    patch:
+      operationId: updateUser
+      summary: Update selected user fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPatch"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    delete:
+      operationId: deleteUser
+      summary: Delete a user
+      responses:
+        "204":
+          description: Deleted
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name, email, gender, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        gender:
+          type: string
+          enum: [male, female]
+        status:
+          type: string
+          enum: [active, inactive]
+    UserWrite:
+      type: object
+      required: [name, email, gender, status]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        gender:
+          type: string
+          enum: [male, female]
+        status:
+          type: string
+          enum: [active, inactive]
+    UserPatch:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        gender:
+          type: string
+          enum: [male, female]
+        status:
+          type: string
+          enum: [active, inactive]

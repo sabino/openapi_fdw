@@ -102,3 +102,5 @@ Use narrow predicates, explicit body whitelists, API idempotency facilities,
 and single-row statements for business-critical side effects. The deterministic
 PostgreSQL 14-18 suite exercises POST, PATCH, PUT, DELETE, dynamic JSONB bodies,
 204 responses, body whitelisting, and the no-retry rule for POST.
+The manual GoRest.in workflow additionally runs a disposable, fully remote
+INSERT/GET/PATCH/PUT/DELETE lifecycle and cleans up by unique email.

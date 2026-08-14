@@ -40,38 +40,38 @@ jobs:
             sleep 1
           done
           test "$ready_checks" -ge 3
-      - name: Create one disposable public object
-        env:
-          API_ORIGIN: https://api.restful-api.dev
+      - name: Prepare one disposable identity
         run: |
           marker="openapi-fdw-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          response=$(curl --fail --silent --show-error \
-            --request POST \
-            --header 'content-type: application/json' \
-            --data "{\"name\":\"$marker\",\"data\":{\"stage\":\"bootstrap\"}}" \
-            "$API_ORIGIN/objects")
-          object_id=$(printf '%s' "$response" | jq --raw-output '.id // empty')
-          test -n "$object_id"
-          printf 'OBJECT_ID=%s\n' "$object_id" >> "$GITHUB_ENV"
-      - name: Import the OpenAPI contract and mutate through SQL
+          printf 'PUBLIC_MARKER=%s\n' "$marker" >> "$GITHUB_ENV"
+          printf 'PUBLIC_EMAIL=%s@example.test\n' "$marker" >> "$GITHUB_ENV"
+      - name: Import the OpenAPI contract and run full CRUD through SQL
         run: |
           docker exec openapi-fdw-live-crud \
             psql -X -v ON_ERROR_STOP=1 \
-              -v object_id="$OBJECT_ID" \
+              -v marker="$PUBLIC_MARKER" \
+              -v email="$PUBLIC_EMAIL" \
               -U postgres -d postgres \
               -f /tests/sql/live_crud.sql
-      - name: Cleanup disposable public object
+      - name: Cleanup disposable public user
         if: always()
         env:
-          API_ORIGIN: https://api.restful-api.dev
+          API_ORIGIN: https://gorest.in
         run: |
-          test -n "${OBJECT_ID:-}" || exit 0
-          status=$(curl --silent --show-error \
-            --output /dev/null \
-            --write-out '%{http_code}' \
-            --request DELETE \
-            "$API_ORIGIN/objects/$OBJECT_ID")
-          test "$status" = 200 || test "$status" = 404
+          test -n "${PUBLIC_EMAIL:-}" || exit 0
+          response=$(curl --fail --silent --show-error --get \
+            --data-urlencode "email=$PUBLIC_EMAIL" \
+            "$API_ORIGIN/public/v2/users")
+          printf '%s' "$response" | jq --raw-output '.[].id' | while read -r user_id; do
+            test -n "$user_id" || continue
+            status=$(curl --silent --show-error \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              --request DELETE \
+              --header 'Authorization: Bearer openapi-fdw-public-validation' \
+              "$API_ORIGIN/public/v2/users/$user_id")
+            test "$status" = 204 || test "$status" = 404
+          done
       - name: Diagnostics
         if: failure()
         run: docker logs --tail 200 openapi-fdw-live-crud || true

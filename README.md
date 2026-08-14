@@ -275,7 +275,7 @@ docker run --name openapi-postgres \
 ```
 
 Tags `pg14` through `pg18` track the latest release for each PostgreSQL major.
-Versioned tags use `v0.4.0-pg18`. The control plane is a separate stripped
+Versioned tags use `v0.4.1-pg18`. The control plane is a separate stripped
 scratch image:
 
 ```text
@@ -288,7 +288,7 @@ On glibc Linux x86-64 with PostgreSQL development/runtime files installed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sabino/openapi_fdw/main/scripts/install.sh \
-  | sudo sh -s -- --version v0.4.0 --pg-config /usr/lib/postgresql/18/bin/pg_config
+  | sudo sh -s -- --version v0.4.1 --pg-config /usr/lib/postgresql/18/bin/pg_config
 ```
 
 The installer detects the PostgreSQL major, downloads its release archive,

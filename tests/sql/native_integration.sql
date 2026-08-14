@@ -216,19 +216,21 @@ ALTER FOREIGN TABLE writable_items OPTIONS (ADD update_method 'PUT');
 DO $test$
 DECLARE
   created_id text;
+  actual_name text;
   actual_data jsonb;
 BEGIN
   SELECT id INTO STRICT created_id
     FROM writable_items
    WHERE name = 'Patched through SQL';
   UPDATE writable_items
-     SET data = '{"stage":"put"}'::jsonb
+     SET name = 'Replaced through SQL', data = '{"stage":"put"}'::jsonb
    WHERE id = created_id;
-  SELECT data INTO STRICT actual_data
+  SELECT name, data INTO STRICT actual_name, actual_data
     FROM writable_items
    WHERE id = created_id;
-  IF actual_data <> '{"stage":"put"}'::jsonb THEN
-    RAISE EXCEPTION 'PUT did not persist through SQL: %', actual_data;
+  IF actual_name <> 'Replaced through SQL'
+     OR actual_data <> '{"stage":"put"}'::jsonb THEN
+    RAISE EXCEPTION 'PUT did not persist through SQL: %, %', actual_name, actual_data;
   END IF;
 
   DELETE FROM writable_items WHERE id = created_id;
@@ -469,6 +471,7 @@ BEGIN
     SELECT 1 FROM request_log
      WHERE attrs ->> 'method' = 'PUT'
        AND attrs ->> 'path' LIKE '/api/writable-items/generated-%'
+       AND attrs #>> '{body,name}' = 'Replaced through SQL'
        AND attrs #> '{body,data}' = '{"stage":"put"}'::jsonb
   ) THEN
     RAISE EXCEPTION 'UPDATE was not mapped to PUT';

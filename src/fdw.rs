@@ -580,6 +580,12 @@ fn write_body(row: &Row, table: &TableConfig) -> Result<JsonValue> {
         }
     }
 
+    if body.is_empty() {
+        return Err(OpenApiFdwError::Configuration(
+            "mutation request body is empty after applying write_columns".to_string(),
+        ));
+    }
+
     Ok(JsonValue::Object(body))
 }
 
@@ -1223,6 +1229,10 @@ mod tests {
             write_body(&partial_update, &table).unwrap(),
             serde_json::json!({"data": {"only": "changed"}})
         );
+
+        let mut filtered_update = Row::new();
+        filtered_update.push("server_only", Some(Cell::String("ignored".to_string())));
+        assert!(write_body(&filtered_update, &table).is_err());
     }
 
     #[test]

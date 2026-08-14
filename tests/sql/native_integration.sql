@@ -211,7 +211,7 @@ BEGIN
 END
 $test$;
 
-ALTER FOREIGN TABLE writable_items OPTIONS (SET update_method 'PUT');
+ALTER FOREIGN TABLE writable_items OPTIONS (ADD update_method 'PUT');
 
 DO $test$
 DECLARE

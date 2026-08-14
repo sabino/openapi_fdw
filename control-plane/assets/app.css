@@ -882,16 +882,43 @@ pre {
   }
 
   .table-choice {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
   }
 
   .table-choice .table-endpoint {
     display: none;
   }
 
+  .table-choice .column-count {
+    grid-column: 2;
+  }
+
   .dialog {
     width: calc(100vw - 16px);
     max-height: calc(100vh - 16px);
+  }
+
+  .dialog-shell {
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .dialog-shell > :not(.dialog-heading) {
+    min-width: 0;
+    margin-right: 12px;
+    margin-left: 12px;
+  }
+
+  .table-picker,
+  .sql-panel,
+  .sql-panel pre {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .dialog-actions {
+    flex-wrap: wrap;
   }
 
   .login-card {

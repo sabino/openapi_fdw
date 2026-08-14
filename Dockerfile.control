@@ -24,4 +24,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=6 \
 
 LABEL org.opencontainers.image.source="https://github.com/sabino/openapi_fdw" \
       org.opencontainers.image.description="Small web control plane for OpenAPI FDW" \
-      org.opencontainers.image.version="0.4.0"
+      org.opencontainers.image.version="0.4.1"

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 - 2026-08-14
+
+- Keep writable discovery dialogs within narrow viewports and show every
+  inferred write capability without horizontal page scrolling.
+- Ship the `0.4.0` to `0.4.1` extension upgrade script so patch releases stay
+  uniform across container images and native packages.
+
 ## 0.4.0 - 2026-08-14
 
 - Add explicit native SQL INSERT/UPDATE/DELETE mapping to POST/PUT/PATCH/DELETE

@@ -42,8 +42,8 @@ The data-plane tags are:
 ```text
 ghcr.io/sabino/openapi_fdw:pg18
 ghcr.io/sabino/openapi_fdw:pg18-alpine
-ghcr.io/sabino/openapi_fdw:v0.4.0-pg18
-ghcr.io/sabino/openapi_fdw:v0.4.0-pg18-alpine
+ghcr.io/sabino/openapi_fdw:v0.4.1-pg18
+ghcr.io/sabino/openapi_fdw:v0.4.1-pg18-alpine
 ```
 
 Replace `18` with 14, 15, 16, or 17 as needed. Floating `pgN` tags follow the
@@ -55,7 +55,7 @@ The control-plane tags are:
 
 ```text
 ghcr.io/sabino/openapi_fdw:control
-ghcr.io/sabino/openapi_fdw:v0.4.0-control
+ghcr.io/sabino/openapi_fdw:v0.4.1-control
 ```
 
 It is a stripped static executable in `scratch`, runs as UID/GID 65532, embeds
@@ -88,10 +88,10 @@ front of the control plane and retain its secure-cookie default.
 Upgrades should keep PostgreSQL on the same major unless a normal PostgreSQL
 major-version upgrade is performed. Updating a same-major image restarts the
 service with the existing volume and updated extension files. After installing
-version 0.4.0 over 0.3.2, run:
+version 0.4.1 over 0.4.0, run:
 
 ```sql
-ALTER EXTENSION openapi_fdw UPDATE TO '0.4.0';
+ALTER EXTENSION openapi_fdw UPDATE TO '0.4.1';
 ```
 
 New PostgreSQL sessions then use the updated versioned shared library.
@@ -109,7 +109,7 @@ glibc Linux x86-64 with the matching PostgreSQL runtime/development files:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sabino/openapi_fdw/main/scripts/install.sh \
-  | sudo sh -s -- --version v0.4.0 \
+  | sudo sh -s -- --version v0.4.1 \
       --pg-config /usr/lib/postgresql/18/bin/pg_config
 ```
 

@@ -17,7 +17,7 @@ use supabase_wrappers::prelude::*;
 use uuid::Uuid;
 
 #[wrappers_fdw(
-    version = "0.4.0",
+    version = "0.4.1",
     author = "Sabino",
     website = "https://github.com/sabino/openapi_fdw",
     error_type = "OpenApiFdwError"

@@ -461,7 +461,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM request_log
      WHERE attrs ->> 'method' = 'PATCH'
-       AND attrs ->> 'path' LIKE '/api/writable-items/generated-%'
+       AND attrs ->> 'path' LIKE '/api/writable-items/generated%'
        AND attrs #>> '{body,name}' = 'Patched through SQL'
        AND attrs #> '{body,data}' = '{"stage":"patch"}'::jsonb
   ) THEN
@@ -470,7 +470,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM request_log
      WHERE attrs ->> 'method' = 'PUT'
-       AND attrs ->> 'path' LIKE '/api/writable-items/generated-%'
+       AND attrs ->> 'path' LIKE '/api/writable-items/generated%'
        AND attrs #>> '{body,name}' = 'Replaced through SQL'
        AND attrs #> '{body,data}' = '{"stage":"put"}'::jsonb
   ) THEN
@@ -479,7 +479,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM request_log
      WHERE attrs ->> 'method' = 'DELETE'
-       AND attrs ->> 'path' LIKE '/api/writable-items/generated-%'
+       AND attrs ->> 'path' LIKE '/api/writable-items/generated%'
   ) THEN
     RAISE EXCEPTION 'DELETE was not sent to the row identity endpoint';
   END IF;

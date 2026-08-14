@@ -146,7 +146,8 @@ DELETE FROM app.items WHERE id = 'object-id';
 ```
 
 `write_columns` is an optional body whitelist; without it, all typed columns
-except the row identity and `attrs` are sent. `write_mode 'attrs'` sends one
+present in the modification row except the row identity and `attrs` are eligible
+to be sent. `write_mode 'attrs'` sends one
 JSONB object as the complete request body. `write_mode 'merge'` starts with that
 JSONB object and overlays the selected typed columns. `column_map` applies in
 both directions, including object-only JSON Pointer paths.

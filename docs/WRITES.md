@@ -31,7 +31,10 @@ identity values are encoded as one URL path segment before substitution.
 In `columns` mode, the FDW turns PostgreSQL values into JSON and applies
 `column_map` to obtain API property names. The row identity and the catch-all
 JSONB column are never included. If `write_columns` is absent, every other
-typed column is used. SQL NULL becomes JSON null.
+typed column present in the modification row is eligible. SQL NULL becomes JSON
+null. For UPDATE, PostgreSQL supplies the columns named by `SET`, so PATCH bodies
+are naturally partial. A PUT statement must set every field required by the
+remote replacement contract.
 
 In `attrs` mode, the configured `attrs_column` must contain a non-NULL JSONB
 object and becomes the complete body. This is the schema-flexible path for APIs
@@ -72,8 +75,8 @@ Consequently:
 
 - rolling back SQL does not compensate an accepted remote mutation;
 - a multi-row statement sends one request at a time and can partially succeed;
-- UPDATE receives the current selected row and sends all whitelisted body
-  columns, not only fields named in the SQL `SET` clause;
+- UPDATE sends the fields named in the SQL `SET` clause after applying the body
+  whitelist;
 - `RETURNING` is not currently supported by the callback adapter; and
 - INSERT still needs a declared `rowid_column`, even when the remote service
   generates the value.

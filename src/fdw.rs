@@ -556,7 +556,6 @@ fn write_body(row: &Row, table: &TableConfig) -> Result<JsonValue> {
     };
 
     if table.write_mode != WriteMode::Attrs {
-        let mut missing = table.write_columns.clone().unwrap_or_default();
         for (column, cell) in row.iter() {
             if table.rowid_column.as_deref() == Some(column.as_str())
                 || column == &table.attrs_column
@@ -568,7 +567,6 @@ fn write_body(row: &Row, table: &TableConfig) -> Result<JsonValue> {
             {
                 continue;
             }
-            missing.remove(column);
             let value = match cell {
                 Some(cell) => cell_to_json(cell)?,
                 None => JsonValue::Null,
@@ -579,12 +577,6 @@ fn write_body(row: &Row, table: &TableConfig) -> Result<JsonValue> {
                 .map(String::as_str)
                 .unwrap_or(column);
             insert_write_value(&mut body, target, value)?;
-        }
-        if !missing.is_empty() {
-            return Err(OpenApiFdwError::Configuration(format!(
-                "write_columns references columns absent from the modified row: {}",
-                missing.into_iter().collect::<Vec<_>>().join(", ")
-            )));
         }
     }
 
@@ -1220,6 +1212,16 @@ mod tests {
                 "displayName": "Example",
                 "data": {"dynamic": true}
             })
+        );
+
+        let mut partial_update = Row::new();
+        partial_update.push(
+            "data",
+            Some(Cell::Json(JsonB(serde_json::json!({"only": "changed"})))),
+        );
+        assert_eq!(
+            write_body(&partial_update, &table).unwrap(),
+            serde_json::json!({"data": {"only": "changed"}})
         );
     }
 
